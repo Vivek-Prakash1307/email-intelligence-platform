@@ -90,7 +90,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 		// Allow specific HTTP methods
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 		// Allow specific headers in the request
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
 		// Allow credentials
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		// Set max age for preflight requests
@@ -99,6 +99,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 		// Handle preflight requests (OPTIONS method)
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK) // Respond with 200 OK for preflight
+			w.Write([]byte{})            // Send empty response body
 			return
 		}
 		// Call the next handler in the chain
@@ -107,8 +108,10 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // checkDomainsHandler handles the HTTP requests for domain validation
+
 func checkDomainsHandler(w http.ResponseWriter, r *http.Request) {
 	// Set the Content-Type header to application/json for the response
+	log.Println("Incoming request to /check-domains")
 	w.Header().Set("Content-Type", "application/json")
 
 	// Only allow POST requests for this endpoint
@@ -162,10 +165,27 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	// Register the /check-domains endpoint with the checkDomainsHandler,
 	// wrapped with the enableCORS middleware to allow cross-origin requests.
+	log.Println("Starting backend service...")
+
 	http.HandleFunc("/check-domains", enableCORS(checkDomainsHandler))
 
 	// Add a health check endpoint
 	http.HandleFunc("/health", healthCheckHandler)
+
+	// Add a specific OPTIONS handler for preflight requests
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte{})
+			return
+		}
+		http.NotFound(w, r)
+	})
 
 	// Define the port on which the server will listen
 	port := os.Getenv("PORT")
