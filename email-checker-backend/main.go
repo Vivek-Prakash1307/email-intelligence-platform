@@ -175,13 +175,19 @@ func main() {
 	// Add a specific OPTIONS handler for preflight requests
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
+			// CORS headers for preflight
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte{})
+			return
+		} else if r.Method == "GET" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"message": "Email Domain Checker API is running 🚀"}`))
 			return
 		}
 		http.NotFound(w, r)
