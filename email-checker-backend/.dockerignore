@@ -1,0 +1,6 @@
+.git
+.gitignore
+*.md
+*.sh
+node_modules
+email-checker-frontend
