@@ -176,7 +176,8 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			// CORS headers for preflight
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", "https://email-domain-checker-olive.vercel.app")
+
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -185,7 +186,8 @@ func main() {
 			return
 		} else if r.Method == "GET" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", "https://email-domain-checker-olive.vercel.app")
+
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"message": "Email Domain Checker API is running 🚀"}`))
 			return
