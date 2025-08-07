@@ -30,7 +30,7 @@ const App = () => {
 
         try {
             // Make a POST request to the backend API
-            const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8081';
+            const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8080';
             const response = await fetch(`${apiUrl}/check-domains`, {
                 method: 'POST',
                 headers: {

@@ -108,7 +108,6 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // checkDomainsHandler handles the HTTP requests for domain validation
-
 func checkDomainsHandler(w http.ResponseWriter, r *http.Request) {
 	// Set the Content-Type header to application/json for the response
 	log.Println("Incoming request to /check-domains")
@@ -168,32 +167,16 @@ func main() {
 	log.Println("Starting backend service...")
 
 	http.HandleFunc("/check-domains", enableCORS(checkDomainsHandler))
-
-	// Add a health check endpoint
-	http.HandleFunc("/health", healthCheckHandler)
-
-	// Add a specific OPTIONS handler for preflight requests
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "OPTIONS" {
-			// CORS headers for preflight
-			w.Header().Set("Access-Control-Allow-Origin", "https://email-domain-checker-olive.vercel.app")
-
-			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Max-Age", "86400")
-			w.WriteHeader(http.StatusOK)
-			return
-		} else if r.Method == "GET" {
+	http.HandleFunc("/health", enableCORS(healthCheckHandler))
+	http.HandleFunc("/", enableCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Access-Control-Allow-Origin", "https://email-domain-checker-olive.vercel.app")
-
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"message": "Email Domain Checker API is running 🚀"}`))
-			return
+			json.NewEncoder(w).Encode(map[string]string{"message": "Email Domain Checker API is running 🚀"})
+		} else {
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
-	})
+	}))
 
 	// Define the port on which the server will listen
 	port := os.Getenv("PORT")
