@@ -28,6 +28,6 @@
     }
   ],
   "env": {
-    "REACT_APP_API_URL": "https://email-domain-checker-full-stack.onrender.com"
+    "REACT_APP_API_URL": "https://email-domain-checker-2.onrender.com"
   }
 } 
