@@ -1,12 +1,14 @@
 {
-  "name": "email-checker-frontend",
-  "version": "0.1.0",
+  "name": "email-domain-checker",
+  "version": "1.0.0",
+  "description": "Advanced Email Intelligence and Validation Platform",
   "private": true,
+  "homepage": ".",
   "dependencies": {
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.3.0",
+    "@testing-library/jest-dom": "^5.16.4",
+    "@testing-library/react": "^13.3.0",
     "@testing-library/user-event": "^13.5.0",
+    "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
@@ -16,7 +18,9 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "analyze": "npm run build && npx bundle-analyzer build/static/js/*.js",
+    "predeploy": "npm run build"
   },
   "eslintConfig": {
     "extends": [
@@ -37,8 +41,9 @@
     ]
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.0"
-  }
+    "autoprefixer": "^10.4.8",
+    "postcss": "^8.4.16",
+    "tailwindcss": "^3.1.8"
+  },
+  "proxy": "http://localhost:8080"
 }

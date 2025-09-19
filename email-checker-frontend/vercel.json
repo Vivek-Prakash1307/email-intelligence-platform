@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "name": "email-domain-checker",
   "builds": [
     {
       "src": "package.json",
@@ -11,23 +12,93 @@
   ],
   "routes": [
     {
+      "src": "/static/js/(.*)",
+      "headers": {
+        "cache-control": "public, max-age=31536000, immutable"
+      },
+      "dest": "/static/js/$1"
+    },
+    {
+      "src": "/static/css/(.*)",
+      "headers": {
+        "cache-control": "public, max-age=31536000, immutable"
+      },
+      "dest": "/static/css/$1"
+    },
+    {
+      "src": "/static/media/(.*)",
+      "headers": {
+        "cache-control": "public, max-age=31536000, immutable"
+      },
+      "dest": "/static/media/$1"
+    },
+    {
       "src": "/static/(.*)",
+      "headers": {
+        "cache-control": "public, max-age=31536000"
+      },
       "dest": "/static/$1"
     },
     {
       "src": "/favicon.ico",
+      "headers": {
+        "cache-control": "public, max-age=86400"
+      },
       "dest": "/favicon.ico"
     },
     {
       "src": "/manifest.json",
+      "headers": {
+        "cache-control": "public, max-age=86400"
+      },
       "dest": "/manifest.json"
     },
     {
+      "src": "/robots.txt",
+      "dest": "/robots.txt"
+    },
+    {
       "src": "/(.*)",
+      "headers": {
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin"
+      },
       "dest": "/index.html"
     }
   ],
   "env": {
-    "REACT_APP_API_URL": "https://email-domain-checker-2.onrender.com"
+    "REACT_APP_API_URL": "https://email-domain-checker-2.onrender.com",
+    "REACT_APP_API_VERSION": "v1",
+    "REACT_APP_MAX_BULK_EMAILS": "500",
+    "REACT_APP_APP_NAME": "Email Intelligence Platform"
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "app/page.tsx": {
+      "maxDuration": 30
+    }
   }
-} 
+}
