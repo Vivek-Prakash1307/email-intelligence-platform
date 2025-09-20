@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "name": "Email Intelligence Platform",
+  "name": "email-intelligence-platform",
   "builds": [
     {
       "src": "package.json",
@@ -95,10 +95,5 @@
         }
       ]
     }
-  ],
-  "functions": {
-    "app/page.tsx": {
-      "maxDuration": 30
-    }
-  }
+  ]
 }
