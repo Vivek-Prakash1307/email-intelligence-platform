@@ -16,13 +16,20 @@ const EmailIntelligencePlatform = () => {
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState(null);
 
+  // 🚀 FIXED: Environment-based API URL configuration
+  const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+  const API_VERSION = process.env.REACT_APP_API_VERSION || 'v1';
+  
+  // Helper function to build API URLs
+  const getApiUrl = (endpoint) => `${API_BASE_URL}/api/${API_VERSION}/${endpoint}`;
+
   useEffect(() => {
     fetchStats();
   }, []);
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('http://localhost:8080/api/v1/stats');
+      const response = await fetch(getApiUrl('stats'));
       const data = await response.json();
       setStats(data);
     } catch (error) {
@@ -35,7 +42,7 @@ const EmailIntelligencePlatform = () => {
     
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/v1/analyze-email', {
+      const response = await fetch(getApiUrl('analyze-email'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -64,9 +71,16 @@ const EmailIntelligencePlatform = () => {
     const emails = bulkEmails.split('\n').filter(e => e.trim()).map(e => e.trim());
     if (emails.length === 0) return;
     
+    // 🚀 FIXED: Use environment variable for max emails limit
+    const maxEmails = parseInt(process.env.REACT_APP_MAX_BULK_EMAILS || '500');
+    if (emails.length > maxEmails) {
+      alert(`Maximum ${maxEmails} emails allowed per request`);
+      return;
+    }
+    
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/v1/bulk-analyze', {
+      const response = await fetch(getApiUrl('bulk-analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -123,7 +137,7 @@ const EmailIntelligencePlatform = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Email Intelligence Platform
+                  {process.env.REACT_APP_APP_NAME || 'Email Intelligence Platform'}
                 </h1>
                 <p className="text-sm text-gray-600">Advanced Email Analysis & Validation</p>
               </div>
@@ -502,7 +516,7 @@ const EmailIntelligencePlatform = () => {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Addresses (One per line, max 500)
+                    Email Addresses (One per line, max {process.env.REACT_APP_MAX_BULK_EMAILS || '500'})
                   </label>
                   <textarea
                     value={bulkEmails}
@@ -516,10 +530,10 @@ const EmailIntelligencePlatform = () => {
                       {bulkEmails.split('\n').filter(e => e.trim()).length} emails entered
                     </span>
                     <span className={`font-medium ${
-                      bulkEmails.split('\n').filter(e => e.trim()).length > 500 
+                      bulkEmails.split('\n').filter(e => e.trim()).length > parseInt(process.env.REACT_APP_MAX_BULK_EMAILS || '500')
                         ? 'text-red-600' : 'text-green-600'
                     }`}>
-                      Limit: {bulkEmails.split('\n').filter(e => e.trim()).length}/500
+                      Limit: {bulkEmails.split('\n').filter(e => e.trim()).length}/{process.env.REACT_APP_MAX_BULK_EMAILS || '500'}
                     </span>
                   </div>
                 </div>
@@ -545,7 +559,7 @@ const EmailIntelligencePlatform = () => {
                   
                   <button
                     onClick={analyzeBulk}
-                    disabled={loading || !bulkEmails.trim() || bulkEmails.split('\n').filter(e => e.trim()).length > 500}
+                    disabled={loading || !bulkEmails.trim() || bulkEmails.split('\n').filter(e => e.trim()).length > parseInt(process.env.REACT_APP_MAX_BULK_EMAILS || '500')}
                     className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium flex items-center space-x-2"
                   >
                     {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -874,7 +888,7 @@ const EmailIntelligencePlatform = () => {
                   {
                     method: 'POST',
                     endpoint: '/api/v1/bulk-analyze',
-                    description: 'Bulk email analysis (up to 100)',
+                    description: 'Bulk email analysis (up to 500)',
                     status: 'operational'
                   },
                   {
@@ -978,7 +992,7 @@ const EmailIntelligencePlatform = () => {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <Mail className="h-5 w-5 text-blue-600" />
-                <span className="font-semibold text-gray-900">Email Intelligence Platform</span>
+                <span className="font-semibold text-gray-900">{process.env.REACT_APP_APP_NAME || 'Email Intelligence Platform'}</span>
               </div>
               <span className="text-sm text-gray-500">v1.0.0</span>
             </div>
