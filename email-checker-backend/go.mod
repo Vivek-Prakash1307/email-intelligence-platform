@@ -1,4 +1,4 @@
-module github.com/Vivek-Prakash1307/email-checker
+module github.com/Vivek-Prakash1307/email-intelligence-platform
 
 go 1.23.0
 
