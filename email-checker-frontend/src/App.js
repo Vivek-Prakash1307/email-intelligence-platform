@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Mail, Search, Shield, Zap, TrendingUp, AlertTriangle, CheckCircle, 
-  XCircle, Eye, EyeOff, BarChart3, Globe, Clock, Award, Target, 
-  Cpu, Database, Lock, Unlock, Users, Building, Star, Activity,
+  XCircle, Eye, BarChart3, Globe, Clock, Target, 
+  Cpu, Database, Users, Building, Star, Activity,
   FileText, Download, Upload, Settings, HelpCircle, RefreshCw
 } from 'lucide-react';
 
@@ -24,6 +24,15 @@ const EmailIntelligencePlatform = () => {
   const getApiUrl = (endpoint) => `${API_BASE_URL}/api/${API_VERSION}/${endpoint}`;
 
   useEffect(() => {
+    const fetchStats = async () => {
+    try {
+      const response = await fetch(getApiUrl('stats'));
+      const data = await response.json();
+      setStats(data);
+    } catch (error) {
+      console.error('Failed to fetch stats:', error);
+    }
+  };
     fetchStats();
   }, []);
 
@@ -998,9 +1007,9 @@ const EmailIntelligencePlatform = () => {
             </div>
             
             <div className="flex items-center space-x-6 text-sm text-gray-600">
-              <a href="#" className="hover:text-gray-900 transition-colors">Documentation</a>
-              <a href="#" className="hover:text-gray-900 transition-colors">API Reference</a>
-              <a href="#" className="hover:text-gray-900 transition-colors">Support</a>
+            <button className="hover:text-gray-900 transition-colors">Documentation</button>
+            <button className="hover:text-gray-900 transition-colors">API Reference</button>
+            <button className="hover:text-gray-900 transition-colors">Support</button>
               <div className="flex items-center space-x-1">
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                 <span>All Systems Operational</span>
