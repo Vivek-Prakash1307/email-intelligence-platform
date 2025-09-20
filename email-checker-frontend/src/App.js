@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect,useCallback } from 'react';
 import { 
   Mail, Search, Shield, Zap, TrendingUp, AlertTriangle, CheckCircle, 
   XCircle, Eye, BarChart3, Globe, Clock, Target, 
@@ -21,21 +21,12 @@ const EmailIntelligencePlatform = () => {
   const API_VERSION = process.env.REACT_APP_API_VERSION || 'v1';
   
   // Helper function to build API URLs
-  const getApiUrl = (endpoint) => `${API_BASE_URL}/api/${API_VERSION}/${endpoint}`;
+ const getApiUrl = useCallback((endpoint) => {
+  return `${API_BASE_URL}/api/${API_VERSION}/${endpoint}`;
+}, [API_BASE_URL, API_VERSION]); // The function now only changes if its dependencies change
 
-  useEffect(() => {
-    const fetchStats = async () => {
-    try {
-      const response = await fetch(getApiUrl('stats'));
-      const data = await response.json();
-      setStats(data);
-    } catch (error) {
-      console.error('Failed to fetch stats:', error);
-    }
-  };
-    fetchStats();
-  }, []);
 
+useEffect(() => {
   const fetchStats = async () => {
     try {
       const response = await fetch(getApiUrl('stats'));
@@ -45,7 +36,9 @@ const EmailIntelligencePlatform = () => {
       console.error('Failed to fetch stats:', error);
     }
   };
-
+  fetchStats();
+}, [getApiUrl]); // <-- इसे यहाँ जोड़ें
+ 
   const analyzeEmail = async () => {
     if (!email.trim()) return;
     
