@@ -17,8 +17,8 @@ const EmailIntelligencePlatform = () => {
   const [stats, setStats] = useState(null);
 
   // 🚀 FIXED: Environment-based API URL configuration
-  const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8080';
-  const API_VERSION = process.env.REACT_APP_API_BASE_VERSION || 'v1';
+  const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+  const API_VERSION = process.env.REACT_APP_API_VERSION || 'v1';
   
   // Helper function to build API URLs
  const getApiUrl = useCallback((endpoint) => {
