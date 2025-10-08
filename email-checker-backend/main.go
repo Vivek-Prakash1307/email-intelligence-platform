@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -120,12 +121,34 @@ var (
 	}
 )
 
+// ✅ NEW: Get environment variable with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 func main() {
+	// ✅ Set GIN_MODE from environment variable
+	ginMode := getEnv("GIN_MODE", "debug")
+	gin.SetMode(ginMode)
+
 	router := gin.Default()
+
+	// ✅ FIXED: Get CORS origins from environment variable
+	corsOrigins := getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+	allowedOrigins := strings.Split(corsOrigins, ",")
+
+	// Trim whitespace from each origin
+	for i := range allowedOrigins {
+		allowedOrigins[i] = strings.TrimSpace(allowedOrigins[i])
+	}
+
+	log.Printf("🌐 CORS Allowed Origins: %v", allowedOrigins)
 
 	// Enhanced CORS
 	router.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"},
 		ExposeHeaders:    []string{"Content-Length", "X-Rate-Limit"},
