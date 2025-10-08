@@ -96,7 +96,9 @@ useEffect(() => {
     } catch (error) {
       setBulkResults({
         results: [],
-        summary: { total: 0, valid: 0, invalid: 0 },
+        summary: { total: 0, valid: 0, invalid: 0 ,  disposable: 0,
+          business: 0,
+          valid_percentage: 0},
         error: 'Network error - please try again'
       });
     }
