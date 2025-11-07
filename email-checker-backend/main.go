@@ -166,7 +166,7 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080" // fallback for local
-	}	
+	}
 	log.Printf("🚀 Advanced Email Intelligence Platform starting on port %s", port)
 	log.Printf("📊 API Endpoints:")
 	log.Printf("   POST /api/v1/analyze-email - Comprehensive email analysis")
@@ -174,7 +174,7 @@ func main() {
 	log.Printf("   GET  /api/v1/domain-info/:domain - Domain information")
 	log.Printf("   GET  /api/v1/health - Health check")
 
-	if err := router.Run(port); err != nil {
+	if err := router.Run(":" + port); err != nil {
 		log.Fatalf("❌ Failed to run server: %v", err)
 	}
 }
