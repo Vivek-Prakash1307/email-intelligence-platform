@@ -14,5 +14,5 @@ services:
       - key: MAX_CONCURRENT_WORKERS
         value: 75
       - key: CORS_ALLOWED_ORIGINS
-        value: https://email-intelligence-platform-1bve.vercel.app,http://localhost:3000
+        value: https://email-intelligence-platform-eora.vercel.app,http://localhost:3000
     healthCheckPath: /api/v1/health
