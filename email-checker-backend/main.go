@@ -130,7 +130,7 @@ func getEnv(key, defaultValue string) string {
 }
 func main() {
 	// ✅ Set GIN_MODE from environment variable
-	ginMode := getEnv("GIN_MODE", "debug")
+	ginMode := getEnv("GIN_MODE", "release")
 	gin.SetMode(ginMode)
 
 	router := gin.Default()
@@ -163,7 +163,10 @@ func main() {
 	router.GET("/api/v1/health", healthCheckHandler)
 	router.GET("/api/v1/stats", statsHandler)
 
-	port := ":8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // fallback for local
+	}	
 	log.Printf("🚀 Advanced Email Intelligence Platform starting on port %s", port)
 	log.Printf("📊 API Endpoints:")
 	log.Printf("   POST /api/v1/analyze-email - Comprehensive email analysis")
