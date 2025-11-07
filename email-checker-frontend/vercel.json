@@ -1,21 +1,15 @@
 {
   "version": 2,
-  "name": "Email Intelligence Platform",
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "build"
-      }
-    }
-  ],
+  "name": "email-intelligence-platform",
+  "framework": "create-react-app",
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
   "headers": [
     {
       "source": "/static/js/(.*)",
       "headers": [
         {
-          "key": "cache-control",
+          "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
         }
       ]
@@ -24,7 +18,7 @@
       "source": "/static/css/(.*)",
       "headers": [
         {
-          "key": "cache-control",
+          "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
         }
       ]
@@ -33,17 +27,8 @@
       "source": "/static/media/(.*)",
       "headers": [
         {
-          "key": "cache-control",
+          "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
-        }
-      ]
-    },
-    {
-      "source": "/static/(.*)",
-      "headers": [
-        {
-          "key": "cache-control",
-          "value": "public, max-age=31536000"
         }
       ]
     },
@@ -51,7 +36,7 @@
       "source": "/favicon.ico",
       "headers": [
         {
-          "key": "cache-control",
+          "key": "Cache-Control",
           "value": "public, max-age=86400"
         }
       ]
@@ -60,7 +45,7 @@
       "source": "/manifest.json",
       "headers": [
         {
-          "key": "cache-control",
+          "key": "Cache-Control",
           "value": "public, max-age=86400"
         }
       ]
@@ -89,11 +74,5 @@
   ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "env": {
-    "REACT_APP_API_URL": "https://email-intelligence-platform.onrender.com",
-    "REACT_APP_API_VERSION": "v1",
-    "REACT_APP_MAX_BULK_EMAILS": "500",
-    "REACT_APP_APP_NAME": "Email Intelligence Platform"
-  }
+  ]
 }
