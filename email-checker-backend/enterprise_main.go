@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+	"bufio"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -297,6 +297,9 @@ func (engine *EmailIntelligenceEngine) AnalyzeEmail(ctx context.Context, email s
 		intelligence.SMTPValidation = engine.validateSMTP(ctx, email, intelligence.DNSValidation.MXDetails)
 	}
 	
+	// 5.1 Fix SMTP status for known free providers (Gmail, Yahoo, Outlook block SMTP tests)
+	
+	
 	// 6. Calculate Enterprise Score
 	intelligence.ScoreBreakdown = engine.calculateEnterpriseScore(intelligence)
 	intelligence.ValidationScore = intelligence.ScoreBreakdown.TotalScore
@@ -453,9 +456,14 @@ func (engine *EmailIntelligenceEngine) validateDNS(ctx context.Context, domain s
 	return result
 }
 
-func (engine *EmailIntelligenceEngine) validateSMTP(ctx context.Context, email string, mxRecords []MXRecord) SMTPValidationResult {
+func (engine *EmailIntelligenceEngine) validateSMTP(
+	ctx context.Context,
+	email string,
+	mxRecords []MXRecord,
+) SMTPValidationResult {
+
 	startTime := time.Now()
-	
+
 	if len(mxRecords) == 0 {
 		return SMTPValidationResult{
 			Reachable: ValidationResult{
@@ -467,42 +475,112 @@ func (engine *EmailIntelligenceEngine) validateSMTP(ctx context.Context, email s
 			},
 		}
 	}
-	
-	// Test SMTP connectivity to the highest priority MX server
+
+	// Use highest priority MX
 	mx := mxRecords[0]
-	
-	// Try multiple ports
-	ports := []int{587, 25, 465, 2525}
-	
-	for _, port := range ports {
-		if engine.testSMTPConnection(ctx, mx.Host, port) {
-			return SMTPValidationResult{
-				Reachable: ValidationResult{
-					Status:    "pass",
-					Reason:    "SMTP server reachable",
-					RawSignal: fmt.Sprintf("port_%d_open", port),
-					Score:     scoringWeights.SMTPReachability,
-					Weight:    scoringWeights.SMTPReachability,
-				},
-				ResponseTime:   time.Since(startTime).Milliseconds(),
-				Port:          port,
-				TLSSupported:  port == 587 || port == 465,
-				ServerResponse: "Connection successful",
-			}
+
+	// SMTP must be tested on port 25 for validation
+	address := fmt.Sprintf("%s:25", mx.Host)
+
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return SMTPValidationResult{
+			Reachable: ValidationResult{
+				Status:    "fail",
+				Reason:    "SMTP connection failed",
+				RawSignal: "connection_failed",
+				Score:     0,
+				Weight:    scoringWeights.SMTPReachability,
+			},
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			Port:         25,
 		}
 	}
-	
+	defer conn.Close()
+
+	conn.SetDeadline(time.Now().Add(6 * time.Second))
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
+	read := func() string {
+		line, _ := reader.ReadString('\n')
+		return line
+	}
+	write := func(cmd string) {
+		writer.WriteString(cmd + "\r\n")
+		writer.Flush()
+	}
+
+	// Read banner
+	banner := read()
+	if !strings.HasPrefix(banner, "220") {
+		return SMTPValidationResult{
+			Reachable: ValidationResult{
+				Status:    "fail",
+				Reason:    "Invalid SMTP banner",
+				RawSignal: "invalid_banner",
+				Score:     0,
+				Weight:    scoringWeights.SMTPReachability,
+			},
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			Port:         25,
+		}
+	}
+
+	// SMTP handshake (SAFE – no DATA command)
+	write("EHLO example.com")
+	read()
+
+	write("MAIL FROM:<probe@example.com>")
+	read()
+
+	write("RCPT TO:<" + email + ">")
+	resp := read()
+
+	// Interpret SMTP response
+	if strings.HasPrefix(resp, "250") {
+		return SMTPValidationResult{
+			Reachable: ValidationResult{
+				Status:    "pass",
+				Reason:    "Mailbox accepted by SMTP server",
+				RawSignal: "rcpt_accepted",
+				Score:     scoringWeights.SMTPReachability,
+				Weight:    scoringWeights.SMTPReachability,
+			},
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			Port:         25,
+		}
+	}
+
+	if strings.HasPrefix(resp, "550") {
+		return SMTPValidationResult{
+			Reachable: ValidationResult{
+				Status:    "fail",
+				Reason:    "Mailbox does not exist",
+				RawSignal: "rcpt_rejected",
+				Score:     0,
+				Weight:    scoringWeights.SMTPReachability,
+			},
+			ResponseTime: time.Since(startTime).Milliseconds(),
+			Port:         25,
+		}
+	}
+
+	// Gmail / Outlook / Yahoo usually reach here
 	return SMTPValidationResult{
 		Reachable: ValidationResult{
-			Status:    "fail",
-			Reason:    "SMTP server not reachable",
-			RawSignal: "connection_failed",
-			Score:     0,
+			Status:    "unknown",
+			Reason:    "SMTP validation blocked or inconclusive",
+			RawSignal: "provider_policy",
+			Score:     10, // partial trust
 			Weight:    scoringWeights.SMTPReachability,
 		},
 		ResponseTime: time.Since(startTime).Milliseconds(),
+		Port:         25,
 	}
 }
+
 
 func (engine *EmailIntelligenceEngine) testSMTPConnection(ctx context.Context, host string, port int) bool {
 	timeout := 2 * time.Second
@@ -888,6 +966,11 @@ func (engine *EmailIntelligenceEngine) calculateDomainReputation(result DomainIn
 		score += 20 // Bonus for corporate
 	}
 	
+	// Special bonus for known free providers (Gmail, Yahoo, etc.)
+	if result.IsFreeProvider.Status == "pass" {
+		score += 25 // Good reputation for known free providers
+	}
+	
 	if result.DomainAge > 365 {
 		score += 10 // Bonus for older domains
 	}
@@ -922,6 +1005,9 @@ func (engine *EmailIntelligenceEngine) calculateEnterpriseScore(intelligence *Em
 		MaxPossible: 100,
 	}
 	
+	// Check if it's a known free provider (Gmail, Yahoo, Outlook, etc.)
+	isFreeProvider := intelligence.DomainIntelligence.IsFreeProvider.Status == "pass"
+	
 	// Syntax Score (10 points)
 	breakdown.SyntaxScore = intelligence.SyntaxValidation.Score
 	
@@ -931,21 +1017,42 @@ func (engine *EmailIntelligenceEngine) calculateEnterpriseScore(intelligence *Em
 	// Security Score (20 points)
 	breakdown.SecurityScore = intelligence.SecurityAnalysis.SecurityScore
 	
-	// SMTP Score (20 points)
+	// SMTP Score (20 points) - Special handling for known providers
 	breakdown.SMTPScore = intelligence.SMTPValidation.Reachable.Score
+	
+	// IMPORTANT: Gmail, Yahoo, Outlook block SMTP tests for security
+	// Give full credit to known free providers even if SMTP test fails
+	if breakdown.SMTPScore == 0 && isFreeProvider {
+	breakdown.SMTPScore = 10 // partial trust (blocked by provider policy)
+}
+
 	
 	// Disposable Score (10 points)
 	breakdown.DisposableScore = intelligence.DomainIntelligence.IsDisposable.Score
 	
 	// Reputation Score (10 points)
-	breakdown.ReputationScore = intelligence.DomainIntelligence.ReputationScore / 10 // Scale to 10 points
+	reputationScore := intelligence.DomainIntelligence.ReputationScore
+	// Known free providers should have good reputation
+	if isFreeProvider && reputationScore < 75 {
+		reputationScore = 85 // Gmail, Yahoo, etc. have excellent reputation
+	}
+	breakdown.ReputationScore = reputationScore / 10 // Scale to 10 points
 	
 	// Catch-all Score (10 points)
 	breakdown.CatchAllScore = intelligence.DomainIntelligence.IsCatchAll.Score
+	// Known providers are not catch-all risks
+	if isFreeProvider {
+		breakdown.CatchAllScore = 10 // Full points for known providers
+	}
 	
 	// Calculate total
 	breakdown.TotalScore = breakdown.SyntaxScore + breakdown.MXScore + breakdown.SecurityScore +
 		breakdown.SMTPScore + breakdown.DisposableScore + breakdown.ReputationScore + breakdown.CatchAllScore
+	
+	// Ensure total doesn't exceed 100
+	if breakdown.TotalScore > 100 {
+		breakdown.TotalScore = 100
+	}
 	
 	// Generate explanation
 	breakdown.Explanation = engine.generateScoreExplanation(breakdown)
@@ -1016,7 +1123,7 @@ func (engine *EmailIntelligenceEngine) analyzeRisk(intelligence *EmailIntelligen
 		})
 	}
 	
-	if intelligence.SMTPValidation.Reachable.Status == "fail" {
+	if intelligence.SMTPValidation.Reachable.Status == "fail" && intelligence.DomainIntelligence.IsFreeProvider.Status != "pass"{
 		analysis.RiskFactors = append(analysis.RiskFactors, RiskFactor{
 			Factor:      "SMTP Unreachable",
 			Severity:    "Medium",
@@ -1184,10 +1291,45 @@ func (engine *EmailIntelligenceEngine) generateMLExplanation(features map[string
 // ============================================================================
 
 func (engine *EmailIntelligenceEngine) determineQualityMetrics(intelligence *EmailIntelligence) {
+	
 	score := intelligence.ValidationScore
 	
-	// Determine validity
-	intelligence.IsValid = score >= 70 && intelligence.DomainIntelligence.IsDisposable.Status != "fail"
+	// Determine validity - Simplified and accurate logic
+	// Email is valid if:
+	// 1. Syntax is valid
+	// 2. Has MX records OR is from a known free provider (Gmail, Yahoo, etc.)
+	// 3. Is NOT a confirmed disposable email
+	// 4. Score is at least 50
+	
+	hasValidSyntax := intelligence.SyntaxValidation.Status == "pass"
+	hasMXRecords := intelligence.DNSValidation.MXRecords.Status == "pass"
+	isFreeProvider := intelligence.DomainIntelligence.IsFreeProvider.Status == "pass"
+	
+	// Check if it's a disposable email - only fail if explicitly detected as disposable with 0 score
+	isDisposable := intelligence.DomainIntelligence.IsDisposable.Status == "fail" && intelligence.DomainIntelligence.IsDisposable.Score == 0
+	
+	// Email is valid if:
+	// - Has valid syntax AND
+	// - Has MX records OR is a known free provider AND
+	// - Is NOT a disposable email AND
+	// - Score is at least 50
+	intelligence.IsValid = hasValidSyntax && (hasMXRecords || isFreeProvider) && !isDisposable && score >= 50
+	
+	// FIX: Free providers (Gmail, Outlook, Yahoo)
+// SMTP blocking does NOT mean not deliverable
+	if isFreeProvider &&
+		hasValidSyntax &&
+		hasMXRecords {
+
+		intelligence.IsValid = true
+		intelligence.RiskCategory = "Safe"
+	}
+
+
+	// Special case: Gmail, Yahoo, Outlook, etc. should always be valid if syntax is correct and MX exists
+	if isFreeProvider && hasValidSyntax && hasMXRecords {
+		intelligence.IsValid = true
+	}
 	
 	// Determine confidence level
 	if score >= 85 {
@@ -1200,7 +1342,13 @@ func (engine *EmailIntelligenceEngine) determineQualityMetrics(intelligence *Ema
 	
 	// Determine risk category
 	riskScore := intelligence.RiskAnalysis.RiskScore
-	if riskScore >= 50 {
+	
+	// Known free providers (Gmail, Yahoo, etc.) with good scores are Safe
+	if isFreeProvider && score >= 60 {
+		intelligence.RiskCategory = "Safe"
+	} else if isDisposable {
+		intelligence.RiskCategory = "High Risk"
+	} else if riskScore >= 50 {
 		intelligence.RiskCategory = "High Risk"
 	} else if riskScore >= 25 {
 		intelligence.RiskCategory = "Medium Risk"
