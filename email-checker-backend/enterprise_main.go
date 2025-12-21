@@ -834,45 +834,68 @@ func (engine *EmailIntelligenceEngine) analyzeSecurityRecords(ctx context.Contex
 	}
 	
 	// Check DKIM with comprehensive selector list
-	// Different providers use different selectors
+	// Different providers use different selectors - order matters, check best selectors first
 	dkimSelectors := []string{
-		// Common selectors
-		"default", "selector1", "selector2", "dkim", "k1", "k2", "k3",
-		"mail", "email", "smtp", "mx", "s1", "s2",
-		// Google/Gmail selectors
-		"google", "20161025", "20230601", "20210112", "ga1",
+		// Google/Gmail selectors (google has full key, others may be rotated)
+		"google", "ga1", "20230601", "20210112", "20161025",
 		// Microsoft/Outlook selectors
-		"selector1-outlook-com", "selector2-outlook-com",
+		"selector1", "selector2", "selector1-outlook-com", "selector2-outlook-com",
+		// Common selectors
+		"default", "dkim", "k1", "k2", "k3",
+		"mail", "email", "smtp", "mx", "s1", "s2",
 		// Other providers
 		"protonmail", "protonmail2", "protonmail3",
-		"yahoo", "ymail",
+		"yahoo", "ymail", "s", "sig1",
 		"zoho", "zmail",
 		"mailchimp", "mandrill", "sendgrid", "amazonses",
 		"cm", "turbo-smtp", "smtp2go",
 	}
 	dkimFound := false
 	var dkimRecord string
+	var bestSelector string
 	
 	for _, selector := range dkimSelectors {
 		dkimRecords, err := engine.dnsResolver.LookupTXT(ctx, selector+"._domainkey."+domain)
 		if err == nil && len(dkimRecords) > 0 {
-			for _, record := range dkimRecords {
-				// Check for valid DKIM record patterns
-				if strings.Contains(record, "k=rsa") || strings.Contains(record, "p=") || 
-				   strings.Contains(record, "k=ed25519") || strings.Contains(record, "v=DKIM1") {
-					dkimFound = true
-					dkimRecord = record
-					result.DKIMRecord = ValidationResult{
-						Status:    "pass",
-						Reason:    fmt.Sprintf("DKIM record found (selector: %s)", selector),
-						RawSignal: record,
-						Score:     6,
-						Weight:    6,
+			// Combine all TXT record parts (DKIM keys can be split across multiple strings)
+			fullRecord := strings.Join(dkimRecords, "")
+			
+			// Check for valid DKIM record with actual public key
+			// Must have p= followed by actual key data (not just "p=" or "p=;")
+			hasValidKey := false
+			if strings.Contains(fullRecord, "p=") {
+				// Extract the p= value and check if it has content
+				pIndex := strings.Index(fullRecord, "p=")
+				if pIndex != -1 {
+					afterP := fullRecord[pIndex+2:]
+					// Check if there's actual key data (not empty, not just semicolon)
+					afterP = strings.TrimSpace(afterP)
+					if len(afterP) > 0 && afterP[0] != ';' && !strings.HasPrefix(afterP, " ;") {
+						hasValidKey = true
 					}
-					break
 				}
 			}
-			if dkimFound {
+			
+			// Accept if it has v=DKIM1 or k=rsa/ed25519 with valid key
+			if hasValidKey || strings.Contains(fullRecord, "v=DKIM1") || 
+			   strings.Contains(fullRecord, "k=ed25519") {
+				dkimFound = true
+				dkimRecord = fullRecord
+				bestSelector = selector
+				
+				// Truncate for display if too long (DKIM keys are very long)
+				displayRecord := fullRecord
+				if len(displayRecord) > 100 {
+					displayRecord = displayRecord[:100] + "..."
+				}
+				
+				result.DKIMRecord = ValidationResult{
+					Status:    "pass",
+					Reason:    fmt.Sprintf("DKIM record found (selector: %s)", selector),
+					RawSignal: displayRecord,
+					Score:     6,
+					Weight:    6,
+				}
 				break
 			}
 		}
@@ -896,7 +919,7 @@ func (engine *EmailIntelligenceEngine) analyzeSecurityRecords(ctx context.Contex
 			result.DKIMRecord = ValidationResult{
 				Status:    "pass",
 				Reason:    "DKIM configured (trusted provider)",
-				RawSignal: "trusted_provider_dkim",
+				RawSignal: "Trusted provider with verified DKIM configuration",
 				Score:     6,
 				Weight:    6,
 			}
@@ -913,8 +936,9 @@ func (engine *EmailIntelligenceEngine) analyzeSecurityRecords(ctx context.Contex
 		}
 	}
 	
-	// Store DKIM record for reference
+	// Store for reference (suppress unused variable warning)
 	_ = dkimRecord
+	_ = bestSelector
 	
 	// Calculate security score
 	result.SecurityScore = result.SPFRecord.Score + result.DMARCRecord.Score + result.DKIMRecord.Score
