@@ -24,7 +24,7 @@ RUN go mod download && go mod verify
 COPY . .
 
 # Build the application with optimizations
-RUN go build -ldflags="-w -s" -a -installsuffix cgo -o main enterprise_main.go
+RUN go build -ldflags="-w -s" -a -installsuffix cgo -o main cmd/server/main.go
 
 # Use minimal alpine image for runtime
 FROM alpine:latest

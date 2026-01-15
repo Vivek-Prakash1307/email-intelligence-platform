@@ -2,7 +2,7 @@ services:
   - type: web
     name: email-intelligence-api
     env: go
-    buildCommand: go build -ldflags="-w -s" -o main enterprise_main.go
+    buildCommand: go build -ldflags="-w -s" -o main cmd/server/main.go
     startCommand: ./main
     envVars:
       - key: PORT

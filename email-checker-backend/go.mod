@@ -1,4 +1,4 @@
-module github.com/Vivek-Prakash1307/email-intelligence-platform
+module email-intelligence
 
 go 1.23.0
 
