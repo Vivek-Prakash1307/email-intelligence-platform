@@ -2225,22 +2225,18 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           weight: result.syntax_validation?.weight
                         },
                         { 
-                          label: 'DNS Validation', 
-                          status: result.dns_validation?.domain_exists?.status,
-                          reason: result.dns_validation?.domain_exists?.reason,
-                          score: result.dns_validation?.domain_exists?.score
-                        },
-                        { 
                           label: 'MX Records', 
                           status: result.dns_validation?.mx_records?.status,
                           reason: result.dns_validation?.mx_records?.reason,
-                          score: result.dns_validation?.mx_records?.score
+                          score: result.dns_validation?.mx_records?.score,
+                          weight: result.dns_validation?.mx_records?.weight
                         },
                         { 
                           label: 'SMTP Reachability', 
                           status: result.smtp_validation?.reachable?.status,
                           reason: result.smtp_validation?.reachable?.reason,
-                          score: result.smtp_validation?.reachable?.score
+                          score: result.smtp_validation?.reachable?.score,
+                          weight: result.smtp_validation?.reachable?.weight
                         }
                       ].map((check, index) => (
                         <div key={index} className={`p-4 rounded-xl border transition-all duration-200 ${

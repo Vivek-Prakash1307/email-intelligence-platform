@@ -48,7 +48,7 @@ func (v *DNSValidator) Validate(ctx context.Context, domain string) models.DNSVa
 	dnsCtx, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
 	
-	// Check A records (domain existence)
+	// Check A records (domain existence) - Informational only, no score
 	aRecords, err := v.resolver.LookupHost(dnsCtx, domain)
 	if err != nil {
 		result.DomainExists = models.ValidationResult{
@@ -56,15 +56,15 @@ func (v *DNSValidator) Validate(ctx context.Context, domain string) models.DNSVa
 			Reason:    "Domain does not exist",
 			RawSignal: err.Error(),
 			Score:     0,
-			Weight:    5,
+			Weight:    0,
 		}
 	} else {
 		result.DomainExists = models.ValidationResult{
 			Status:    "pass",
 			Reason:    "Domain exists",
 			RawSignal: fmt.Sprintf("%d_a_records", len(aRecords)),
-			Score:     5,
-			Weight:    5,
+			Score:     0,
+			Weight:    0,
 		}
 		result.ARecords = aRecords
 	}
