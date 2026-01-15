@@ -1,19 +1,19 @@
 services:
   - type: web
     name: email-intelligence-api
-    env: go
+    runtime: go
     rootDir: email-checker-backend
-    buildCommand: go build -ldflags="-w -s" -o main cmd/server/main.go
-    startCommand: ./main
+    buildCommand: |
+      go mod download
+      go build -ldflags="-w -s" -o app cmd/server/main.go
+    startCommand: ./app
     envVars:
       - key: PORT
         value: 8080
       - key: GIN_MODE
         value: release
-      - key: MAX_EMAILS_PER_REQUEST
-        value: 1000
-      - key: MAX_CONCURRENT_WORKERS
-        value: 100
+      - key: GO111MODULE
+        value: on
       - key: CORS_ALLOWED_ORIGINS
         value: https://email-intelligence-platform-eora.vercel.app,http://localhost:3000,https://email-intelligence-platform.vercel.app
     healthCheckPath: /api/v1/health
