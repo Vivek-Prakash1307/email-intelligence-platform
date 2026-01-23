@@ -1330,19 +1330,19 @@ const EnterpriseEmailIntelligencePlatform = () => {
               
               <div>
                 <h1 className={`text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent`}>
-                  EmailIntel Pro
+                  Email Intelligence Platform
                 </h1>
                 <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Enterprise Email Intelligence Platform
+                  
                 </p>
               </div>
               
               <div className="hidden md:flex items-center space-x-2">
                 <span className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-green-600 text-white text-xs font-medium rounded-full">
-                  ⚡ Ultra-Fast
+                     Ultra-Fast
                 </span>
                 <span className="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white text-xs font-medium rounded-full">
-                  🧠 AI-Powered
+                     AI-Powered
                 </span>
               </div>
             </div>
@@ -1412,7 +1412,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     Settings & Configuration
                   </h2>
                   <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Customize your EmailIntel Pro experience
+                    Custom Email experience
                   </p>
                 </div>
               </div>
@@ -1958,7 +1958,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                 {/* Email Input with Auto-suggestions */}
                 <div className="space-y-3">
                   <label className={`block text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                    Email Address Analysis
+                    Email Address
                   </label>
                   
                   <div className="relative">
@@ -2026,7 +2026,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           className="w-5 h-5 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
                         />
                         <label htmlFor="deepAnalysis" className={`font-medium cursor-pointer ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                          Deep Intelligence Analysis
+                          Deep Analysis
                         </label>
                       </div>
                       
