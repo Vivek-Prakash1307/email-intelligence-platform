@@ -1319,7 +1319,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
               
               <div className="hidden md:flex items-center space-x-2">
                 <span className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-green-600 text-white text-xs font-medium rounded-full">
-                     Real-Time SMTP
+                     Mailbox Verification
                 </span>
                 <span className="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white text-xs font-medium rounded-full">
                      Evidence-Based
@@ -2023,7 +2023,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           <div className={`absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-4 py-2 rounded-lg text-sm whitespace-nowrap z-50 ${
                             darkMode ? 'bg-gray-800 text-gray-200 border border-gray-700' : 'bg-white text-gray-700 border border-gray-200 shadow-lg'
                           }`}>
-                            Performs a fresh recipient SMTP probe, catch-all detection, and security analysis
+                            Performs fresh mailbox verification, catch-all detection, and security analysis
                           </div>
                         )}
                       </div>
@@ -2032,7 +2032,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     <div className="flex items-center space-x-4 text-sm">
                       <div className={`flex items-center space-x-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                         <Zap className="h-4 w-4 text-yellow-500" />
-                        <span>{deepAnalysis ? 'Real-Time SMTP Mode' : 'Domain Checks Only'}</span>
+                        <span>{deepAnalysis ? 'Deep Mailbox Verification' : 'Domain Checks Only'}</span>
                       </div>
                       
                       {processingMetrics && (
@@ -2254,7 +2254,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           weight: result.dns_validation?.mx_records?.weight
                         },
                         { 
-                          label: 'SMTP Reachability', 
+                          label: result.smtp_validation?.source === 'verifalia' ? 'Mailbox Verification (Verifalia)' : 'SMTP Reachability',
                           status: result.smtp_validation?.reachable?.status,
                           reason: result.smtp_validation?.reachable?.reason,
                           score: result.smtp_validation?.reachable?.score,
@@ -2620,12 +2620,14 @@ const EnterpriseEmailIntelligencePlatform = () => {
                               ? 'bg-emerald-100 text-emerald-700'
                               : 'bg-gray-100 text-gray-700'
                           }`}>
-                            {result.verification_details.evidence.real_time ? 'REAL-TIME SMTP' : 'SMTP NOT RUN'}
+                            {result.verification_details.evidence.real_time
+                              ? result.verification_details.evidence.method === 'verifalia_api' ? 'VERIFALIA API' : 'REAL-TIME SMTP'
+                              : 'MAILBOX CHECK NOT RUN'}
                           </span>
                         </div>
                         <div className="grid sm:grid-cols-3 gap-3 text-sm mb-3">
                           <div>
-                            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>SMTP recipient: </span>
+                            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Recipient evidence: </span>
                             <strong className="capitalize">{result.verification_details.evidence.smtp_recipient}</strong>
                           </div>
                           <div>
@@ -2637,6 +2639,12 @@ const EnterpriseEmailIntelligencePlatform = () => {
                             <strong className="capitalize">{result.verification_details.evidence.ownership}</strong>
                           </div>
                         </div>
+                        {result.smtp_validation?.source === 'verifalia' && (
+                          <div className={`text-xs mb-3 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                            Provider result: <strong>{result.smtp_validation.provider_classification || 'Unknown'}</strong>
+                            {result.smtp_validation.provider_status ? ` (${result.smtp_validation.provider_status})` : ''}
+                          </div>
+                        )}
                         <ul className={`text-xs space-y-1 ${darkMode ? 'text-blue-300' : 'text-blue-800'}`}>
                           {(result.verification_details.evidence.limitations || []).map((limitation) => (
                             <li key={limitation}>• {limitation}</li>

@@ -95,7 +95,7 @@ func (a *ScoreAnalyzer) generateExplanation(breakdown models.ScoreBreakdown) str
 		explanations = append(explanations, fmt.Sprintf("MX records found (+%d)", breakdown.MXScore))
 	}
 	if breakdown.SMTPScore > 0 {
-		explanations = append(explanations, fmt.Sprintf("SMTP recipient evidence (+%d)", breakdown.SMTPScore))
+		explanations = append(explanations, fmt.Sprintf("Mailbox recipient evidence (+%d)", breakdown.SMTPScore))
 	}
 	if breakdown.DisposableScore > 0 {
 		explanations = append(explanations, fmt.Sprintf("Not disposable (+%d)", breakdown.DisposableScore))

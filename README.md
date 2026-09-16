@@ -78,6 +78,19 @@ Configuration:
 - `CORS_ALLOWED_ORIGINS` (comma-separated)
 - `DNS_TIMEOUT` (Go duration, default `4s`)
 - `SMTP_TIMEOUT` (Go duration, default `8s`)
+- `EMAIL_VERIFICATION_PROVIDER` (`auto`, `verifalia`, or `smtp`; default `auto`)
+- `VERIFALIA_USERNAME` and `VERIFALIA_PASSWORD` (backend secrets)
+- `VERIFALIA_TIMEOUT` (Go duration, default `20s`)
+- `VERIFALIA_MAX_CONCURRENCY` (default `5`)
+- `SMTP_FALLBACK_ENABLED` (default `false`)
+
+With `auto`, configured Verifalia credentials select HTTPS provider verification;
+otherwise the backend uses its direct SMTP probe. With `verifalia`, missing
+credentials produce an explicit `not_checked` result. Provider failures remain
+`unknown`; direct SMTP is attempted after such failures only when
+`SMTP_FALLBACK_ENABLED=true`. Keep the Verifalia credentials exclusively in the
+backend environment and create a restricted API user instead of using an
+administrator account.
 
 ## Verify
 

@@ -197,6 +197,7 @@ func (v *SMTPValidator) result(mailboxStatus, reason, signal string, code int, s
 	return models.SMTPValidationResult{
 		Reachable:     models.ValidationResult{Status: status, Reason: reason, RawSignal: signal, Score: score, Weight: v.weights.SMTPReachability},
 		MailboxStatus: mailboxStatus, AcceptAllStatus: "not_checked", DiagnosticCode: code, ResponseTime: time.Since(started).Milliseconds(),
+		Source: "direct_smtp",
 	}
 }
 

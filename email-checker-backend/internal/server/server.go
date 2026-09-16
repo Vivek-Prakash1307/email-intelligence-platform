@@ -38,7 +38,7 @@ func Run() {
 			"service": "email-intelligence-api",
 			"status":  "healthy",
 			"health":  "/api/v1/health",
-			"version": "3.1.0",
+			"version": "3.2.0",
 		})
 	})
 
@@ -51,7 +51,7 @@ func Run() {
 		v1.GET("/scoring-weights", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"algorithm": "Enterprise Email Intelligence Scoring",
-				"version":   "3.1.0",
+				"version":   "3.2.0",
 				"weights":   cfg.ScoringWeights,
 				"total":     100,
 			})

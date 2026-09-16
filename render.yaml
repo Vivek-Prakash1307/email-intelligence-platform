@@ -14,4 +14,16 @@ services:
         value: on
       - key: CORS_ALLOWED_ORIGINS
         value: https://email-intelligence-platform-eora-3d3gdricp.vercel.app,https://email-intelligence-platform-eora.vercel.app,https://email-intelligence-platform.vercel.app,http://localhost:3000
+      - key: EMAIL_VERIFICATION_PROVIDER
+        value: verifalia
+      - key: VERIFALIA_USERNAME
+        sync: false
+      - key: VERIFALIA_PASSWORD
+        sync: false
+      - key: VERIFALIA_TIMEOUT
+        value: 20s
+      - key: VERIFALIA_MAX_CONCURRENCY
+        value: 5
+      - key: SMTP_FALLBACK_ENABLED
+        value: false
     healthCheckPath: /api/v1/health

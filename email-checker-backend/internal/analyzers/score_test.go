@@ -143,3 +143,24 @@ func TestDisposableDetailsAndProviderDetails(t *testing.T) {
 		t.Fatalf("inbox limitations were not represented: %+v", intelligence.VerificationDetails.Evidence)
 	}
 }
+
+func TestVerifaliaRiskDoesNotBecomeSMTPAcceptance(t *testing.T) {
+	intelligence := strongIntelligence()
+	intelligence.ValidationScore = 45
+	intelligence.SMTPValidation = models.SMTPValidationResult{
+		Reachable:       models.ValidationResult{Status: "unknown"},
+		MailboxStatus:   "unknown",
+		AcceptAllStatus: "unknown",
+		Attempted:       true,
+		Source:          "verifalia",
+		ProviderClass:   "Risky",
+		ProviderStatus:  "MailboxHasInsufficientStorage",
+	}
+	NewQualityAnalyzer().Determine(intelligence)
+	if intelligence.DeliverabilityStatus != "risky" || intelligence.VerificationDetails.Evidence.SMTPRecipient != "unknown" {
+		t.Fatalf("provider risk was misrepresented: %+v", intelligence)
+	}
+	if intelligence.VerificationDetails.Evidence.Method != "verifalia_api" || intelligence.VerificationDetails.Account.FullMailbox != "yes" {
+		t.Fatalf("provider details were not exposed: %+v", intelligence.VerificationDetails)
+	}
+}

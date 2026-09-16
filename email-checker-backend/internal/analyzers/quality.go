@@ -31,6 +31,8 @@ func (a *QualityAnalyzer) Determine(intelligence *models.EmailIntelligence) {
 		intelligence.IsValid = false
 	case isDisposable:
 		intelligence.DeliverabilityStatus = "risky"
+	case intelligence.SMTPValidation.ProviderClass == "Risky":
+		intelligence.DeliverabilityStatus = "risky"
 	case !hasMXRecords:
 		intelligence.DeliverabilityStatus = "unknown"
 		intelligence.IsValid = false
@@ -97,17 +99,17 @@ func (a *QualityAnalyzer) populateVerificationDetails(intelligence *models.Email
 		Domain: models.DomainDetails{
 			Name: domain, AcceptAll: normalizeTriState(intelligence.SMTPValidation.AcceptAllStatus),
 			Disposable: yesNo(isDisposable),
-			Free:       yesNo(intelligence.DomainIntelligence.IsFreeProvider.Status == "pass"),
+			Free:       providerBoolOrDefault(intelligence.SMTPValidation.ProviderSignals.Free, intelligence.DomainIntelligence.IsFreeProvider.Status == "pass"),
 		},
 		Account: models.AccountDetails{
-			Role: yesNo(isRoleAddress(localPart)), Disabled: "unknown", FullMailbox: "unknown",
+			Role: providerBoolOrDefault(intelligence.SMTPValidation.ProviderSignals.Role, isRoleAddress(localPart)), Disabled: "unknown", FullMailbox: "unknown",
 		},
 		Provider: models.ProviderDetails{Domain: providerDomain(domain)},
 		Evidence: models.EvidenceDetails{
 			SMTPRecipient:      normalizeMailboxEvidence(intelligence.SMTPValidation.MailboxStatus),
 			InboxPlacement:     "not_verified",
 			Ownership:          "not_verified",
-			Method:             verificationMethod(intelligence.SMTPValidation.Attempted),
+			Method:             verificationMethod(intelligence.SMTPValidation),
 			RealTime:           intelligence.SMTPValidation.Attempted,
 			ConfirmationNeeded: true,
 			Limitations: []string{
@@ -121,6 +123,13 @@ func (a *QualityAnalyzer) populateVerificationDetails(intelligence *models.Email
 
 	if intelligence.SMTPValidation.DiagnosticCode == 552 {
 		details.Account.FullMailbox = "yes"
+	}
+	if intelligence.SMTPValidation.ProviderStatus == "MailboxHasInsufficientStorage" {
+		details.Account.FullMailbox = "yes"
+	}
+	if intelligence.SMTPValidation.Source == "verifalia" {
+		details.Evidence.Limitations = append(details.Evidence.Limitations,
+			"External verification uses provider-controlled methods and may include cached or proprietary evidence")
 	}
 
 	switch {
@@ -142,10 +151,18 @@ func (a *QualityAnalyzer) populateVerificationDetails(intelligence *models.Email
 		details.Toxicity = 3
 	case intelligence.DeliverabilityStatus == "deliverable":
 		details.Reason = "accepted_email"
-		details.Message = "The receiving server accepted this recipient and rejected a random address. Delivery is likely, but not guaranteed."
+		if intelligence.SMTPValidation.Source == "verifalia" {
+			details.Message = "Verifalia classified this recipient as deliverable. Delivery is likely, but not guaranteed."
+		} else {
+			details.Message = "The receiving server accepted this recipient and rejected a random address. Delivery is likely, but not guaranteed."
+		}
 	case intelligence.DeliverabilityStatus == "risky":
 		details.Reason = "catch_all_or_inconclusive"
-		details.Message = "The recipient was accepted, but catch-all behavior could not be excluded."
+		if intelligence.SMTPValidation.Source == "verifalia" && intelligence.SMTPValidation.MailboxStatus != "accepted" {
+			details.Message = "Verifalia classified this address as risky, but did not provide conclusive mailbox acceptance evidence."
+		} else {
+			details.Message = "The recipient was accepted, but catch-all behavior could not be excluded."
+		}
 		details.Toxicity = 1
 	default:
 		details.Reason = "inconclusive"
@@ -167,11 +184,22 @@ func normalizeMailboxEvidence(value string) string {
 	}
 }
 
-func verificationMethod(attempted bool) string {
-	if attempted {
+func verificationMethod(result models.SMTPValidationResult) string {
+	switch result.Source {
+	case "verifalia":
+		return "verifalia_api"
+	case "direct_smtp":
 		return "smtp_envelope_probe"
+	default:
+		return "none"
 	}
-	return "none"
+}
+
+func providerBoolOrDefault(value *bool, fallback bool) string {
+	if value != nil {
+		return yesNo(*value)
+	}
+	return yesNo(fallback)
 }
 
 func normalizeTriState(value string) string {

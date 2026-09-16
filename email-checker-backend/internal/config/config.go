@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"email-intelligence/internal/models"
@@ -9,24 +11,36 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port           string
-	CORSOrigins    []string
-	SMTPTimeout    time.Duration
-	DNSTimeout     time.Duration
-	WorkerPoolSize int
-	CacheDuration  time.Duration
-	ScoringWeights models.ScoringWeights
+	Port                 string
+	CORSOrigins          []string
+	SMTPTimeout          time.Duration
+	DNSTimeout           time.Duration
+	WorkerPoolSize       int
+	CacheDuration        time.Duration
+	VerificationProvider string
+	VerifaliaUsername    string
+	VerifaliaPassword    string
+	VerifaliaTimeout     time.Duration
+	VerifaliaConcurrency int
+	SMTPFallbackEnabled  bool
+	ScoringWeights       models.ScoringWeights
 }
 
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
-		Port:           getEnv("PORT", "8080"),
-		CORSOrigins:    getCORSOrigins(),
-		SMTPTimeout:    getDurationEnv("SMTP_TIMEOUT", 8*time.Second),
-		DNSTimeout:     getDurationEnv("DNS_TIMEOUT", 4*time.Second),
-		WorkerPoolSize: 100,
-		CacheDuration:  15 * time.Minute,
+		Port:                 getEnv("PORT", "8080"),
+		CORSOrigins:          getCORSOrigins(),
+		SMTPTimeout:          getDurationEnv("SMTP_TIMEOUT", 8*time.Second),
+		DNSTimeout:           getDurationEnv("DNS_TIMEOUT", 4*time.Second),
+		WorkerPoolSize:       100,
+		CacheDuration:        15 * time.Minute,
+		VerificationProvider: strings.ToLower(getEnv("EMAIL_VERIFICATION_PROVIDER", "auto")),
+		VerifaliaUsername:    os.Getenv("VERIFALIA_USERNAME"),
+		VerifaliaPassword:    os.Getenv("VERIFALIA_PASSWORD"),
+		VerifaliaTimeout:     getDurationEnv("VERIFALIA_TIMEOUT", 20*time.Second),
+		VerifaliaConcurrency: getPositiveIntEnv("VERIFALIA_MAX_CONCURRENCY", 5),
+		SMTPFallbackEnabled:  getBoolEnv("SMTP_FALLBACK_ENABLED", false),
 		ScoringWeights: models.ScoringWeights{
 			SyntaxFormat:     10,
 			MXRecords:        25,
@@ -37,6 +51,26 @@ func Load() *Config {
 			CatchAllRisk:     10,
 		},
 	}
+}
+
+func getPositiveIntEnv(key string, defaultValue int) int {
+	value, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || value <= 0 {
+		return defaultValue
+	}
+	return value
+}
+
+func getBoolEnv(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 func getDurationEnv(key string, defaultValue time.Duration) time.Duration {

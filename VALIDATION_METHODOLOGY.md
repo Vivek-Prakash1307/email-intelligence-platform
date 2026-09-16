@@ -63,6 +63,15 @@ sending `DATA`; no email message is transmitted.
 Deep analysis is not cached. Each deep-analysis request performs fresh DNS and
 SMTP work. Basic analysis may use the configured short-lived cache.
 
+When `EMAIL_VERIFICATION_PROVIDER=verifalia`, deep analysis instead submits a
+fresh verification job through Verifalia's HTTPS API. Vendor classifications
+are normalized conservatively: deliverable becomes accepted, undeliverable
+becomes rejected, catch-all becomes risky, and generic risky or unknown results
+remain inconclusive. API errors and timeouts never become mailbox rejection.
+The response exposes `smtp_validation.source`, `provider_status`, and
+`provider_classification` so consumers can distinguish direct SMTP evidence
+from external-provider evidence.
+
 For definitive verification, send a consent-based confirmation link (double
 opt-in) and record the successful confirmation.
 

@@ -109,6 +109,18 @@ type SMTPValidationResult struct {
 	ServerResponse  string           `json:"server_response"`
 	Port            int              `json:"port"`
 	TLSSupported    bool             `json:"tls_supported"`
+	Source          string           `json:"source"` // direct_smtp, verifalia, none
+	ProviderStatus  string           `json:"provider_status,omitempty"`
+	ProviderClass   string           `json:"provider_classification,omitempty"`
+	ProviderSignals ProviderSignals  `json:"provider_signals,omitempty"`
+}
+
+// ProviderSignals contains optional facts returned by an external verification
+// provider. Pointers preserve the difference between false and not supplied.
+type ProviderSignals struct {
+	Disposable *bool `json:"disposable,omitempty"`
+	Free       *bool `json:"free,omitempty"`
+	Role       *bool `json:"role,omitempty"`
 }
 
 // SecurityAnalysisResult contains security record analysis

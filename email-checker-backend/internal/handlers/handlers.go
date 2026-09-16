@@ -159,7 +159,7 @@ func (h *Handlers) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":    "healthy",
 		"service":   "enterprise-email-intelligence-platform",
-		"version":   "3.1.0",
+		"version":   "3.2.0",
 		"timestamp": time.Now().Format(time.RFC3339),
 		"performance": gin.H{
 			"avg_latency_ms": avgLatency,
@@ -169,6 +169,7 @@ func (h *Handlers) Health(c *gin.Context) {
 		"features": []string{
 			"Evidence-based scoring (0-100)",
 			"SMTP recipient and catch-all probing",
+			"Optional Verifalia HTTPS mailbox verification",
 			"Explicit unknown/inconclusive results",
 			"SPF, DKIM, and DMARC analysis",
 			"Bulk Processing (1000 emails)",

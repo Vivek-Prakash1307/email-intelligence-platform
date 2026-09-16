@@ -8,6 +8,7 @@ require (
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
+	github.com/verifalia/verifalia-go-sdk/v2 v2.0.0
 )
 
 require (
