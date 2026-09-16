@@ -47,7 +47,7 @@ func main() {
 		v1.GET("/scoring-weights", func(c *gin.Context) {
 			c.JSON(200, gin.H{
 				"algorithm": "Enterprise Email Intelligence Scoring",
-				"version":   "2.0.0",
+				"version":   "3.1.0",
 				"weights":   cfg.ScoringWeights,
 				"total":     100,
 			})
@@ -55,13 +55,10 @@ func main() {
 	}
 	
 	// Start server
-	log.Printf("🚀 Enterprise Email Intelligence Platform starting on port %s", cfg.Port)
-	log.Printf("📊 Ultra-Fast • Highly Accurate • Enterprise-Grade")
-	log.Printf("⚡ Parallel Validation: DNS + Security (SPF/DMARC/DKIM) + Domain Intelligence")
-	log.Printf("🔥 DKIM: 30+ selectors searched in parallel")
-	log.Printf("🌐 SMTP: Multiple MX servers & ports tested concurrently")
+	log.Printf("Email verification service starting on port %s", cfg.Port)
+	log.Printf("Validation: syntax, DNS/MX, SMTP recipient, catch-all, SPF/DMARC/DKIM")
 	
 	if err := router.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("❌ Failed to start server: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }

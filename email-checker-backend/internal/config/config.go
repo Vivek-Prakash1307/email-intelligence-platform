@@ -9,13 +9,13 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port             string
-	CORSOrigins      []string
-	SMTPTimeout      time.Duration
-	DNSTimeout       time.Duration
-	WorkerPoolSize   int
-	CacheDuration    time.Duration
-	ScoringWeights   models.ScoringWeights
+	Port           string
+	CORSOrigins    []string
+	SMTPTimeout    time.Duration
+	DNSTimeout     time.Duration
+	WorkerPoolSize int
+	CacheDuration  time.Duration
+	ScoringWeights models.ScoringWeights
 }
 
 // Load loads configuration from environment variables
@@ -23,20 +23,32 @@ func Load() *Config {
 	return &Config{
 		Port:           getEnv("PORT", "8080"),
 		CORSOrigins:    getCORSOrigins(),
-		SMTPTimeout:    3 * time.Second,
-		DNSTimeout:     2 * time.Second,
+		SMTPTimeout:    getDurationEnv("SMTP_TIMEOUT", 8*time.Second),
+		DNSTimeout:     getDurationEnv("DNS_TIMEOUT", 4*time.Second),
 		WorkerPoolSize: 100,
 		CacheDuration:  15 * time.Minute,
 		ScoringWeights: models.ScoringWeights{
 			SyntaxFormat:     10,
-			MXRecords:        20,
-			SecurityRecords:  20,
-			SMTPReachability: 20,
+			MXRecords:        25,
+			SecurityRecords:  0, // informational: sender authentication does not prove recipient existence
+			SMTPReachability: 45,
 			DisposableCheck:  10,
-			DomainReputation: 10,
+			DomainReputation: 0, // unknown reputation never receives assumed credit
 			CatchAllRisk:     10,
 		},
 	}
+}
+
+func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
 }
 
 func getEnv(key, defaultValue string) string {
@@ -89,14 +101,14 @@ func splitString(s, sep string) []string {
 func trimSpace(s string) string {
 	start := 0
 	end := len(s)
-	
+
 	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
 		start++
 	}
-	
+
 	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
 		end--
 	}
-	
+
 	return s[start:end]
 }

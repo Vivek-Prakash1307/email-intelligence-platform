@@ -31,12 +31,13 @@ func New(eng *engine.Engine) *Handlers {
 // AnalyzeEmail handles single email analysis
 func (h *Handlers) AnalyzeEmail(c *gin.Context) {
 	startTime := time.Now()
-	
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+
 	var request struct {
 		Email        string `json:"email" binding:"required"`
 		DeepAnalysis bool   `json:"deep_analysis"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request format",
@@ -44,33 +45,34 @@ func (h *Handlers) AnalyzeEmail(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	intelligence, err := h.engine.AnalyzeEmail(c.Request.Context(), request.Email, request.DeepAnalysis)
 	if err != nil {
-		c.JSON(http.StatusTooManyRequests, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
 	}
-	
+
 	c.Header("X-Processing-Time", fmt.Sprintf("%dms", time.Since(startTime).Milliseconds()))
 	c.Header("X-Confidence-Level", intelligence.ConfidenceLevel)
 	c.Header("X-Risk-Category", intelligence.RiskCategory)
-	
-	h.updateMetrics(intelligence.ProcessingTime, intelligence.IsValid)
-	
+
+	h.updateMetrics(intelligence.ProcessingTime, false)
+
 	c.JSON(http.StatusOK, intelligence)
 }
 
 // BulkAnalyze handles bulk email analysis
 func (h *Handlers) BulkAnalyze(c *gin.Context) {
 	startTime := time.Now()
-	
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+
 	var request struct {
 		Emails       []string `json:"emails" binding:"required"`
 		DeepAnalysis bool     `json:"deep_analysis"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid request format",
@@ -78,7 +80,7 @@ func (h *Handlers) BulkAnalyze(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	if len(request.Emails) > 1000 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":    "Too many emails. Maximum 1000 emails per request",
@@ -87,20 +89,24 @@ func (h *Handlers) BulkAnalyze(c *gin.Context) {
 		})
 		return
 	}
-	
+	if len(request.Emails) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "At least one email address is required"})
+		return
+	}
+
 	// Process emails concurrently
 	results := make([]*models.EmailIntelligence, len(request.Emails))
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 50)
-	
+
 	for i, email := range request.Emails {
 		wg.Add(1)
 		go func(index int, emailAddr string) {
 			defer wg.Done()
-			
+
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			
+
 			intelligence, err := h.engine.AnalyzeEmail(c.Request.Context(), emailAddr, request.DeepAnalysis)
 			if err != nil {
 				intelligence = &models.EmailIntelligence{
@@ -115,21 +121,26 @@ func (h *Handlers) BulkAnalyze(c *gin.Context) {
 			results[index] = intelligence
 		}(i, email)
 	}
-	
+
 	wg.Wait()
-	
+
 	summary := h.generateBulkSummary(results)
 	processingTime := time.Since(startTime).Milliseconds()
-	
+	h.updateMetrics(processingTime, false)
+	emailsPerSecond := float64(0)
+	if processingTime > 0 {
+		emailsPerSecond = float64(len(results)) / (float64(processingTime) / 1000)
+	}
+
 	c.Header("X-Processing-Time", fmt.Sprintf("%dms", processingTime))
 	c.Header("X-Processed-Count", fmt.Sprintf("%d", len(results)))
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"results": results,
 		"summary": summary,
 		"performance": gin.H{
 			"processing_time_ms": processingTime,
-			"emails_per_second":  float64(len(results)) / (float64(processingTime) / 1000),
+			"emails_per_second":  emailsPerSecond,
 			"total_emails":       len(results),
 		},
 	})
@@ -144,22 +155,22 @@ func (h *Handlers) Health(c *gin.Context) {
 	}
 	successRate := float64(h.requestCount-h.errorCount) / float64(max(h.requestCount, 1)) * 100
 	h.metricsLock.RUnlock()
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"status":      "healthy",
-		"service":     "enterprise-email-intelligence-platform",
-		"version":     "2.0.0",
-		"timestamp":   time.Now().Format(time.RFC3339),
+		"status":    "healthy",
+		"service":   "enterprise-email-intelligence-platform",
+		"version":   "3.1.0",
+		"timestamp": time.Now().Format(time.RFC3339),
 		"performance": gin.H{
 			"avg_latency_ms": avgLatency,
 			"success_rate":   successRate,
 			"total_requests": h.requestCount,
 		},
 		"features": []string{
-			"Ultra-Accurate Scoring (0-100)",
-			"Real-time Intelligence",
-			"ML-Enhanced Predictions",
-			"Enterprise Security Analysis",
+			"Evidence-based scoring (0-100)",
+			"SMTP recipient and catch-all probing",
+			"Explicit unknown/inconclusive results",
+			"SPF, DKIM, and DMARC analysis",
 			"Bulk Processing (1000 emails)",
 			"Advanced Risk Assessment",
 			"Parallel Validation Pipeline",
@@ -171,7 +182,7 @@ func (h *Handlers) Health(c *gin.Context) {
 func (h *Handlers) Metrics(c *gin.Context) {
 	h.metricsLock.RLock()
 	defer h.metricsLock.RUnlock()
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"requests": gin.H{
 			"total":   h.requestCount,
@@ -186,14 +197,14 @@ func (h *Handlers) Metrics(c *gin.Context) {
 	})
 }
 
-func (h *Handlers) updateMetrics(latency int64, isValid bool) {
+func (h *Handlers) updateMetrics(latency int64, hadError bool) {
 	h.metricsLock.Lock()
 	defer h.metricsLock.Unlock()
-	
+
 	h.requestCount++
 	h.totalLatency += latency
-	
-	if !isValid {
+
+	if hadError {
 		h.errorCount++
 	}
 }
@@ -204,7 +215,11 @@ func (h *Handlers) generateBulkSummary(results []*models.EmailIntelligence) gin.
 	premium := 0
 	highRisk := 0
 	disposable := 0
-	
+	deliverable := 0
+	risky := 0
+	unknown := 0
+	undeliverable := 0
+
 	for _, result := range results {
 		if result.IsValid {
 			valid++
@@ -218,8 +233,22 @@ func (h *Handlers) generateBulkSummary(results []*models.EmailIntelligence) gin.
 		if result.DomainIntelligence.IsDisposable.Status == "fail" {
 			disposable++
 		}
+		switch result.DeliverabilityStatus {
+		case "deliverable":
+			deliverable++
+		case "risky":
+			risky++
+		case "unknown":
+			unknown++
+		case "undeliverable", "invalid":
+			undeliverable++
+		}
 	}
-	
+
+	validPercentage := float64(0)
+	if total > 0 {
+		validPercentage = float64(valid) / float64(total) * 100
+	}
 	return gin.H{
 		"total":            total,
 		"valid":            valid,
@@ -227,7 +256,11 @@ func (h *Handlers) generateBulkSummary(results []*models.EmailIntelligence) gin.
 		"premium":          premium,
 		"high_risk":        highRisk,
 		"disposable":       disposable,
-		"valid_percentage": float64(valid) / float64(total) * 100,
+		"deliverable":      deliverable,
+		"risky":            risky,
+		"unknown":          unknown,
+		"undeliverable":    undeliverable,
+		"valid_percentage": validPercentage,
 	}
 }
 

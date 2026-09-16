@@ -22,75 +22,91 @@ func (a *ScoreAnalyzer) Calculate(intelligence *models.EmailIntelligence) models
 	breakdown := models.ScoreBreakdown{
 		MaxPossible: 100,
 	}
-	
-	isFreeProvider := intelligence.DomainIntelligence.IsFreeProvider.Status == "pass"
-	
-	// Syntax Score (10 points)
+
+	// The deliverability score uses only evidence related to receiving mail.
+	// SPF/DKIM/DMARC describe outbound authentication and are informational.
 	breakdown.SyntaxScore = intelligence.SyntaxValidation.Score
-	
-	// MX Score (20 points)
 	breakdown.MXScore = intelligence.DNSValidation.MXRecords.Score
-	
-	// Security Score (20 points)
-	breakdown.SecurityScore = intelligence.SecurityAnalysis.SecurityScore
-	
-	// SMTP Score (20 points) - Full credit for trusted providers
+	breakdown.SecurityScore = 0
 	breakdown.SMTPScore = intelligence.SMTPValidation.Reachable.Score
-	if isFreeProvider && breakdown.SMTPScore < 20 {
-		breakdown.SMTPScore = 20
-	}
-	
-	// Disposable Score (10 points)
 	breakdown.DisposableScore = intelligence.DomainIntelligence.IsDisposable.Score
-	
-	// Reputation Score (10 points)
-	reputationScore := intelligence.DomainIntelligence.ReputationScore
-	if isFreeProvider && reputationScore < 75 {
-		reputationScore = 85
+	breakdown.ReputationScore = 0
+
+	switch intelligence.DomainIntelligence.IsCatchAll.Status {
+	case "fail": // catch-all detected
+		breakdown.CatchAllScore = 0
+	case "pass": // random recipient rejected
+		breakdown.CatchAllScore = a.weights.CatchAllRisk
+	default:
+		breakdown.CatchAllScore = 0
 	}
-	breakdown.ReputationScore = reputationScore / 10
-	
-	// Catch-all Score (10 points)
-	breakdown.CatchAllScore = intelligence.DomainIntelligence.IsCatchAll.Score
-	if isFreeProvider {
-		breakdown.CatchAllScore = 10
-	}
-	
-	// Calculate total
+
 	breakdown.TotalScore = breakdown.SyntaxScore + breakdown.MXScore + breakdown.SecurityScore +
 		breakdown.SMTPScore + breakdown.DisposableScore + breakdown.ReputationScore + breakdown.CatchAllScore
-	
+	switch {
+	case intelligence.DNSValidation.MXRecords.Status == "fail":
+		breakdown.Outcome = "invalid_domain"
+		breakdown.OverrideReason = "A domain that cannot receive mail is not deliverable"
+	case intelligence.SMTPValidation.MailboxStatus == "rejected":
+		breakdown.Outcome = "mailbox_rejected"
+		breakdown.OverrideReason = "The receiving server permanently rejected the recipient"
+	case intelligence.DomainIntelligence.IsDisposable.Status == "fail":
+		breakdown.Outcome = "disposable"
+		breakdown.OverrideReason = "Disposable addresses are capped because they may expire"
+	case intelligence.SMTPValidation.MailboxStatus == "accepted" && intelligence.SMTPValidation.AcceptAllStatus == "no":
+		breakdown.Outcome = "confirmed_smtp"
+	case intelligence.SMTPValidation.MailboxStatus == "accepted" && intelligence.SMTPValidation.AcceptAllStatus == "yes":
+		breakdown.Outcome = "catch_all"
+	case intelligence.SMTPValidation.MailboxStatus == "accepted":
+		breakdown.Outcome = "accepted_inconclusive"
+	default:
+		breakdown.Outcome = "inconclusive"
+	}
+	if breakdown.Outcome == "invalid_domain" || breakdown.Outcome == "mailbox_rejected" {
+		breakdown.TotalScore = 0
+	}
+	if breakdown.Outcome == "disposable" {
+		breakdown.TotalScore = min(breakdown.TotalScore, 10)
+	}
 	if breakdown.TotalScore > 100 {
 		breakdown.TotalScore = 100
 	}
-	
 	breakdown.Explanation = a.generateExplanation(breakdown)
-	
 	return breakdown
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (a *ScoreAnalyzer) generateExplanation(breakdown models.ScoreBreakdown) string {
+	if breakdown.OverrideReason != "" {
+		return fmt.Sprintf("%s; final score %d/100", breakdown.OverrideReason, breakdown.TotalScore)
+	}
 	explanations := []string{}
-	
+
 	if breakdown.SyntaxScore > 0 {
 		explanations = append(explanations, fmt.Sprintf("Valid syntax (+%d)", breakdown.SyntaxScore))
 	}
 	if breakdown.MXScore > 0 {
 		explanations = append(explanations, fmt.Sprintf("MX records found (+%d)", breakdown.MXScore))
 	}
-	if breakdown.SecurityScore > 0 {
-		explanations = append(explanations, fmt.Sprintf("Security records (+%d)", breakdown.SecurityScore))
-	}
 	if breakdown.SMTPScore > 0 {
-		explanations = append(explanations, fmt.Sprintf("SMTP reachable (+%d)", breakdown.SMTPScore))
+		explanations = append(explanations, fmt.Sprintf("SMTP recipient evidence (+%d)", breakdown.SMTPScore))
 	}
 	if breakdown.DisposableScore > 0 {
 		explanations = append(explanations, fmt.Sprintf("Not disposable (+%d)", breakdown.DisposableScore))
 	}
-	
+	if breakdown.CatchAllScore > 0 {
+		explanations = append(explanations, fmt.Sprintf("Catch-all confidence (+%d)", breakdown.CatchAllScore))
+	}
+
 	if len(explanations) == 0 {
 		return "Score based on failed validation checks"
 	}
-	
+
 	return strings.Join(explanations, ", ")
 }

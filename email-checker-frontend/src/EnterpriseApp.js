@@ -186,15 +186,12 @@ const EnterpriseEmailIntelligencePlatform = () => {
     const fetchRealTimeStats = async () => {
       try {
         const response = await fetch(getApiUrl('metrics'));
+		if (!response.ok) throw new Error(`Metrics request failed: ${response.status}`);
         const data = await response.json();
         setRealTimeStats(data);
-        
-        // Generate chart data based on real stats
-        generateChartData(data);
       } catch (error) {
         console.error('Failed to fetch real-time stats:', error);
-        // Generate mock data for demo
-        generateMockChartData();
+		setRealTimeStats(null);
       }
     };
     
@@ -204,71 +201,31 @@ const EnterpriseEmailIntelligencePlatform = () => {
     return () => clearInterval(interval);
   }, [getApiUrl]);
 
-  // Generate chart data from real metrics
-  const generateChartData = (stats) => {
-    const now = new Date();
-    const validationTrends = [];
-    const riskDistribution = [
-      { name: 'Safe', value: 65, color: '#10b981' },
-      { name: 'Medium Risk', value: 25, color: '#f59e0b' },
-      { name: 'High Risk', value: 8, color: '#ef4444' },
-      { name: 'Invalid', value: 2, color: '#6b7280' }
-    ];
-    
-    // Generate trend data for last 7 days
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      validationTrends.push({
-        date: date.toLocaleDateString(),
-        valid: Math.floor(Math.random() * 100) + 50,
-        invalid: Math.floor(Math.random() * 30) + 10,
-        total: Math.floor(Math.random() * 150) + 100
-      });
-    }
-    
-    const performanceMetrics = [
-      { name: 'Avg Latency', value: stats?.performance?.avg_latency_ms || 245, unit: 'ms' },
-      { name: 'Success Rate', value: stats?.performance?.success_rate || 98.5, unit: '%' },
-      { name: 'Cache Hit Rate', value: 87.3, unit: '%' },
-      { name: 'Throughput', value: 2150, unit: '/min' }
-    ];
-    
-    setChartData({
-      validationTrends,
-      riskDistribution,
-      performanceMetrics
-    });
-  };
+  // Charts use only real API metrics and this browser session's validations.
+  const generateChartData = useCallback((stats, history) => {
+    const groupedByDate = history.reduce((groups, item) => {
+      const date = new Date(item.timestamp).toLocaleDateString();
+      if (!groups[date]) groups[date] = { date, valid: 0, invalid: 0, total: 0 };
+      groups[date].total += 1;
+      if (item.result.deliverability_status === 'deliverable') groups[date].valid += 1;
+      if (['invalid', 'undeliverable'].includes(item.result.deliverability_status)) groups[date].invalid += 1;
+      return groups;
+    }, {});
+    const validationTrends = Object.values(groupedByDate).slice(-7);
 
-  // Generate mock chart data for demo
-  const generateMockChartData = () => {
-    const now = new Date();
-    const validationTrends = [];
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      validationTrends.push({
-        date: date.toLocaleDateString(),
-        valid: Math.floor(Math.random() * 100) + 50,
-        invalid: Math.floor(Math.random() * 30) + 10,
-        total: Math.floor(Math.random() * 150) + 100
-      });
-    }
-    
-    const riskDistribution = [
-      { name: 'Safe', value: 65, color: '#10b981' },
-      { name: 'Medium Risk', value: 25, color: '#f59e0b' },
-      { name: 'High Risk', value: 8, color: '#ef4444' },
-      { name: 'Invalid', value: 2, color: '#6b7280' }
-    ];
-    
+    const riskColors = { Safe: '#10b981', 'Medium Risk': '#f59e0b', 'High Risk': '#ef4444', Invalid: '#6b7280' };
+    const riskCounts = history.reduce((counts, item) => {
+      const category = item.result.risk_category || 'Invalid';
+      counts[category] = (counts[category] || 0) + 1;
+      return counts;
+    }, {});
+    const riskDistribution = Object.entries(riskCounts).map(([name, value]) => ({ name, value, color: riskColors[name] || '#6b7280' }));
+
     const performanceMetrics = [
-      { name: 'Avg Latency', value: 245, unit: 'ms' },
-      { name: 'Success Rate', value: 98.5, unit: '%' },
-      { name: 'Cache Hit Rate', value: 87.3, unit: '%' },
-      { name: 'Throughput', value: 2150, unit: '/min' }
+	  { name: 'Avg Latency', value: Math.round(stats?.performance?.avg_latency_ms || 0), unit: 'ms' },
+	  { name: 'API Success', value: Math.round(stats?.performance?.success_rate || 0), unit: '%' },
+	  { name: 'Requests', value: stats?.requests?.total || 0, unit: '' },
+	  { name: 'API Errors', value: stats?.requests?.errors || 0, unit: '' }
     ];
     
     setChartData({
@@ -276,7 +233,11 @@ const EnterpriseEmailIntelligencePlatform = () => {
       riskDistribution,
       performanceMetrics
     });
-  };
+  }, []);
+
+  useEffect(() => {
+	generateChartData(realTimeStats, validationHistory);
+  }, [realTimeStats, validationHistory, generateChartData]);
 
   // Animated score counter
   useEffect(() => {
@@ -362,7 +323,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
     const emails = bulkEmails.split('\n').filter(e => e.trim()).map(e => e.trim());
     if (emails.length === 0) return;
     
-    const maxEmails = 1000;
+	const maxEmails = Math.min(Number(settings.maxBulkEmails) || 1000, 1000);
     if (emails.length > maxEmails) {
       alert(`Maximum ${maxEmails} emails allowed per request`);
       return;
@@ -380,14 +341,17 @@ const EnterpriseEmailIntelligencePlatform = () => {
           deep_analysis: deepAnalysis 
         }),
       });
-      
+	  if (!response.ok) {
+		const errorBody = await response.json().catch(() => ({}));
+		throw new Error(errorBody.error || `HTTP ${response.status}`);
+	  }
       const data = await response.json();
       setBulkResults(data);
     } catch (error) {
       setBulkResults({
         results: [],
         summary: { total: 0, valid: 0, invalid: 0, disposable: 0, premium: 0, valid_percentage: 0 },
-        error: 'Network error - please try again'
+		error: error.message || 'Network error - please try again'
       });
     }
     
@@ -413,6 +377,14 @@ const EnterpriseEmailIntelligencePlatform = () => {
     };
     return colors[category] || 'bg-gray-100 text-gray-800 border-gray-200';
   };
+
+  const getDeliveryStatusColor = (status) => {
+	if (status === 'deliverable') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+	if (status === 'undeliverable' || status === 'invalid') return 'bg-red-100 text-red-800 border-red-200';
+	return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+  };
+
+  const getDeliveryStatusLabel = (status) => (status || 'unknown').replaceAll('_', ' ').toUpperCase();
 
   // Notification system with improved sound effects
   const showNotification = (message, type = 'success') => {
@@ -544,12 +516,12 @@ const EnterpriseEmailIntelligencePlatform = () => {
           // Bulk results CSV
           csvContent = 'Email,Score,Status,Risk Category,Quality Tier,Confidence Level\n';
           bulkResults.results.forEach(item => {
-            csvContent += `"${item.email}",${item.validation_score},"${item.is_valid ? 'Valid' : 'Invalid'}","${item.risk_category}","${item.quality_tier || 'Unknown'}","${item.confidence_level}"\n`;
+            csvContent += `"${item.email}",${item.validation_score},"${item.deliverability_status || (item.is_valid ? 'valid' : 'invalid')}","${item.risk_category}","${item.quality_tier || 'Unknown'}","${item.confidence_level}"\n`;
           });
         } else if (result) {
           // Single result CSV
           csvContent = 'Email,Score,Status,Risk Category,Quality Tier,Confidence Level\n';
-          csvContent += `"${result.email}",${result.validation_score},"${result.is_valid ? 'Valid' : 'Invalid'}","${result.risk_category}","${result.quality_tier || 'Unknown'}","${result.confidence_level}"\n`;
+          csvContent += `"${result.email}",${result.validation_score},"${result.deliverability_status || (result.is_valid ? 'valid' : 'invalid')}","${result.risk_category}","${result.quality_tier || 'Unknown'}","${result.confidence_level}"\n`;
         }
         
         const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -597,7 +569,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
         yPosition += 10;
         pdf.text(`Validation Score: ${result.validation_score}/100`, 20, yPosition);
         yPosition += 10;
-        pdf.text(`Status: ${result.is_valid ? 'Valid' : 'Invalid'}`, 20, yPosition);
+        pdf.text(`Status: ${result.deliverability_status || (result.is_valid ? 'valid' : 'invalid')}`, 20, yPosition);
         yPosition += 10;
         pdf.text(`Risk Category: ${result.risk_category}`, 20, yPosition);
         yPosition += 10;
@@ -631,11 +603,11 @@ const EnterpriseEmailIntelligencePlatform = () => {
         pdf.setFontSize(12);
         pdf.text(`Total Emails: ${bulkResults.summary?.total || 0}`, 20, yPosition);
         yPosition += 10;
-        pdf.text(`Valid Emails: ${bulkResults.summary?.valid || 0}`, 20, yPosition);
+        pdf.text(`Deliverable: ${bulkResults.summary?.deliverable || 0}`, 20, yPosition);
         yPosition += 10;
-        pdf.text(`Invalid Emails: ${bulkResults.summary?.invalid || 0}`, 20, yPosition);
+        pdf.text(`Undeliverable/Invalid: ${bulkResults.summary?.undeliverable || 0}`, 20, yPosition);
         yPosition += 10;
-        pdf.text(`Success Rate: ${Math.round(bulkResults.summary?.valid_percentage || 0)}%`, 20, yPosition);
+        pdf.text(`Risky or Unknown: ${(bulkResults.summary?.risky || 0) + (bulkResults.summary?.unknown || 0)}`, 20, yPosition);
         yPosition += 20;
         
         // Add table header
@@ -656,7 +628,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
           
           pdf.text(item.email.substring(0, 25), 20, yPosition);
           pdf.text(`${item.validation_score}`, 80, yPosition);
-          pdf.text(item.is_valid ? 'Valid' : 'Invalid', 110, yPosition);
+		  pdf.text((item.deliverability_status || 'unknown').substring(0, 14), 110, yPosition);
           pdf.text(item.risk_category, 140, yPosition);
           yPosition += 8;
         });
@@ -1339,10 +1311,10 @@ const EnterpriseEmailIntelligencePlatform = () => {
               
               <div className="hidden md:flex items-center space-x-2">
                 <span className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-green-600 text-white text-xs font-medium rounded-full">
-                     Ultra-Fast
+                     Real-Time SMTP
                 </span>
                 <span className="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white text-xs font-medium rounded-full">
-                     AI-Powered
+                     Evidence-Based
                 </span>
               </div>
             </div>
@@ -1940,10 +1912,10 @@ const EnterpriseEmailIntelligencePlatform = () => {
                 
                 <div>
                   <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                    AI-Powered Email Intelligence
+                    Email Deliverability Verification
                   </h2>
                   <p className={`${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Ultra-accurate validation with real-time intelligence and ML predictions
+                    Evidence-based validation with honest SMTP uncertainty
                   </p>
                 </div>
                 
@@ -1974,7 +1946,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                               ? 'bg-gray-900/50 border-gray-600 text-white placeholder-gray-400' 
                               : 'bg-white/90 border-gray-300 text-gray-900 placeholder-gray-500'
                           }`}
-                          onKeyPress={(e) => e.key === 'Enter' && analyzeEmail()}
+						  onKeyDown={(e) => e.key === 'Enter' && analyzeEmail()}
                         />
                         
                         {email && (
@@ -2043,7 +2015,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           <div className={`absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-4 py-2 rounded-lg text-sm whitespace-nowrap z-50 ${
                             darkMode ? 'bg-gray-800 text-gray-200 border border-gray-700' : 'bg-white text-gray-700 border border-gray-200 shadow-lg'
                           }`}>
-                            Includes SMTP validation, ML predictions & advanced security analysis
+                            Performs a fresh recipient SMTP probe, catch-all detection, and security analysis
                           </div>
                         )}
                       </div>
@@ -2052,7 +2024,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     <div className="flex items-center space-x-4 text-sm">
                       <div className={`flex items-center space-x-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
                         <Zap className="h-4 w-4 text-yellow-500" />
-                        <span>{deepAnalysis ? 'Ultra-Accurate Mode' : 'Lightning Mode'}</span>
+                        <span>{deepAnalysis ? 'Real-Time SMTP Mode' : 'Domain Checks Only'}</span>
                       </div>
                       
                       {processingMetrics && (
@@ -2070,6 +2042,43 @@ const EnterpriseEmailIntelligencePlatform = () => {
             {/* Premium Results Section */}
             {result && (
               <div ref={resultsRef} className="space-y-8 animate-fade-in results-section">
+
+				{/* Primary decision banner */}
+				<div className={`rounded-3xl p-6 border shadow-xl ${
+				  result.deliverability_status === 'deliverable'
+					? 'bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200 dark:from-emerald-950/60 dark:to-green-950/40 dark:border-emerald-800'
+					: ['invalid', 'undeliverable'].includes(result.deliverability_status)
+					? 'bg-gradient-to-r from-red-50 to-rose-50 border-red-200 dark:from-red-950/60 dark:to-rose-950/40 dark:border-red-800'
+					: 'bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200 dark:from-amber-950/60 dark:to-yellow-950/40 dark:border-amber-800'
+				}`}>
+				  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+					<div className="flex items-start gap-4 min-w-0">
+					  <div className={`p-3 rounded-2xl ${getDeliveryStatusColor(result.deliverability_status)}`}>
+						{result.deliverability_status === 'deliverable' ? <CheckCircle className="h-7 w-7" /> :
+						 ['invalid', 'undeliverable'].includes(result.deliverability_status) ? <XCircle className="h-7 w-7" /> :
+						 <AlertTriangle className="h-7 w-7" />}
+					  </div>
+					  <div className="min-w-0">
+						<div className="flex flex-wrap items-center gap-2 mb-1">
+						  <span className={`px-3 py-1 rounded-full border text-xs font-bold ${getDeliveryStatusColor(result.deliverability_status)}`}>
+							{getDeliveryStatusLabel(result.deliverability_status)}
+						  </span>
+						  {result.verification_details?.evidence?.real_time && (
+							<span className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-bold">LIVE SMTP</span>
+						  )}
+						</div>
+						<h2 className={`text-xl font-bold break-all ${darkMode ? 'text-white' : 'text-gray-900'}`}>{result.email}</h2>
+						<p className={`mt-1 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+						  {result.verification_details?.message || result.explanation_text}
+						</p>
+					  </div>
+					</div>
+					<div className="md:text-right flex-shrink-0">
+					  <div className={`text-3xl font-bold ${getScoreTextColor(result.validation_score)}`}>{result.validation_score}/100</div>
+					  <div className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Evidence score · {result.score_breakdown?.outcome?.replaceAll('_', ' ') || 'unknown'}</div>
+					</div>
+				  </div>
+				</div>
                 
                 {/* Hero Score Display */}
                 <div className={`backdrop-blur-xl rounded-3xl p-8 border shadow-2xl transition-all duration-500 ${
@@ -2126,24 +2135,28 @@ const EnterpriseEmailIntelligencePlatform = () => {
                       </div>
                       
                       <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                        Intelligence Score
+                        Evidence Score
                       </h3>
                       <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        Ultra-Accurate Algorithm
+                        Based on observable verification signals
                       </p>
                     </div>
                     
                     {/* Status Indicator */}
                     <div className="text-center">
                       <div className={`w-32 h-32 mx-auto mb-4 rounded-full flex items-center justify-center border-4 ${
-                        result.is_valid 
+                        result.deliverability_status === 'deliverable'
                           ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-700' 
-                          : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-700'
+                          : ['invalid', 'undeliverable'].includes(result.deliverability_status)
+                          ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-700'
+                          : 'bg-yellow-50 border-yellow-200 dark:bg-yellow-900/20 dark:border-yellow-700'
                       }`}>
-                        {result.is_valid ? (
+                        {result.deliverability_status === 'deliverable' ? (
                           <CheckCircle className="h-16 w-16 text-emerald-600" />
-                        ) : (
+                        ) : ['invalid', 'undeliverable'].includes(result.deliverability_status) ? (
                           <XCircle className="h-16 w-16 text-red-600" />
+                        ) : (
+                          <AlertTriangle className="h-16 w-16 text-yellow-600" />
                         )}
                       </div>
                       
@@ -2151,9 +2164,10 @@ const EnterpriseEmailIntelligencePlatform = () => {
                         Validation Status
                       </h3>
                       <p className={`text-sm font-medium ${
-                        result.is_valid ? 'text-emerald-600' : 'text-red-600'
+                        result.deliverability_status === 'deliverable' ? 'text-emerald-600' :
+                        ['invalid', 'undeliverable'].includes(result.deliverability_status) ? 'text-red-600' : 'text-yellow-600'
                       }`}>
-                        {result.is_valid ? 'DELIVERABLE' : 'NOT DELIVERABLE'}
+                        {(result.deliverability_status || 'unknown').replace('_', ' ').toUpperCase()}
                       </p>
                     </div>
                     
@@ -2187,7 +2201,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                       </div>
                       
                       <h3 className={`text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                        AI Confidence
+                        Evidence Confidence
                       </h3>
                       <p className={`text-sm font-medium ${
                         result.confidence_level === 'High' ? 'text-blue-600' :
@@ -2389,13 +2403,13 @@ const EnterpriseEmailIntelligencePlatform = () => {
                             ? 'text-yellow-600' 
                             : 'text-red-600'
                         }`}>
-                          Threat Level: {result.security_analysis?.threat_level || 'Unknown'}
+						  Sender-auth posture: {result.security_analysis?.threat_level || 'Unknown'}
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
-                {/* ML Predictions & Risk Analysis */}
+                {/* Deterministic estimates & risk analysis */}
                 {result.ml_predictions && (
                   <div className={`backdrop-blur-xl rounded-2xl p-6 border transition-all duration-300 ${
                     darkMode 
@@ -2405,10 +2419,10 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     <div className="flex items-center space-x-3 mb-6">
                       <Brain className="h-6 w-6 text-purple-600" />
                       <h3 className={`text-xl font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                        AI Predictions & Risk Analysis
+                        Heuristic Estimates & Risk Analysis
                       </h3>
                       <span className="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white text-xs font-medium rounded-full">
-                        ML-Powered
+                        Deterministic
                       </span>
                     </div>
                     
@@ -2430,7 +2444,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           </span>
                         </div>
                         <h4 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                          Spam Risk
+						  Disposable Risk
                         </h4>
                         <p className={`text-xs ${
                           result.ml_predictions.spam_probability < 0.3 ? 'text-emerald-600' :
@@ -2458,7 +2472,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           </span>
                         </div>
                         <h4 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                          Bounce Risk
+						  Delivery Risk Index
                         </h4>
                         <p className={`text-xs ${
                           result.ml_predictions.bounce_probability < 0.3 ? 'text-emerald-600' :
@@ -2477,15 +2491,15 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           </span>
                         </div>
                         <h4 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                          Deliverability
+						  Evidence Match
                         </h4>
                         <p className="text-xs text-blue-600">
-                          ML Confidence: {Math.round(result.ml_predictions.confidence * 100)}%
+                          Evidence confidence: {Math.round(result.ml_predictions.confidence * 100)}%
                         </p>
                       </div>
                     </div>
                     
-                    {/* ML Explanation */}
+                    {/* Heuristic explanation */}
                     {result.ml_predictions.explanation && (
                       <div className={`p-4 rounded-xl border ${
                         darkMode ? 'bg-purple-900/20 border-purple-700/50' : 'bg-purple-50 border-purple-200'
@@ -2494,13 +2508,132 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           <Brain className="h-5 w-5 text-purple-600 mt-0.5" />
                           <div>
                             <h5 className={`font-medium mb-1 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                              AI Analysis Explanation
+                              Estimate Explanation
                             </h5>
                             <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-800'}`}>
                               {result.ml_predictions.explanation}
                             </p>
                           </div>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Mailbox verification summary */}
+                {result.verification_details && (
+                  <div className={`backdrop-blur-xl rounded-2xl p-6 border transition-all duration-300 ${
+                    darkMode ? 'bg-gray-800/60 border-gray-700/50' : 'bg-white/80 border-gray-200/50'
+                  }`}>
+                    <div className="flex items-center space-x-3 mb-4">
+                      <Mail className="h-6 w-6 text-blue-600" />
+                      <div>
+                        <h3 className={`text-xl font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          Mailbox Verification Details
+                        </h3>
+                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          Reason: {result.verification_details.reason?.replaceAll('_', ' ') || 'inconclusive'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className={`p-4 mb-6 rounded-xl border ${
+                      result.deliverability_status === 'deliverable'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : ['invalid', 'undeliverable'].includes(result.deliverability_status)
+                        ? 'bg-red-50 border-red-200 text-red-800'
+                        : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                    }`}>
+                      {result.verification_details.message}
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {[
+                        {
+                          title: 'Domain',
+                          rows: [
+                            ['Name', result.verification_details.domain?.name || 'unknown'],
+                            ['Accept all', result.verification_details.domain?.accept_all || 'unknown'],
+                            ['Disposable', result.verification_details.domain?.disposable || 'unknown'],
+                            ['Free', result.verification_details.domain?.free || 'unknown']
+                          ]
+                        },
+                        {
+                          title: 'Account',
+                          rows: [
+                            ['Role', result.verification_details.account?.role || 'unknown'],
+                            ['Disabled', result.verification_details.account?.disabled || 'unknown'],
+                            ['Full mailbox', result.verification_details.account?.full_mailbox || 'unknown']
+                          ]
+                        },
+                        {
+                          title: 'Provider',
+                          rows: [['Domain', result.verification_details.provider?.domain || 'other']]
+                        },
+                        {
+                          title: 'Score',
+                          rows: [
+                            ['Score', `${result.verification_details.score ?? result.validation_score}/100`],
+                            ['Toxicity', result.verification_details.toxicity ?? 0],
+                            ['Outcome', result.score_breakdown?.outcome?.replaceAll('_', ' ') || 'unknown']
+                          ]
+                        }
+                      ].map((section) => (
+                        <div key={section.title} className={`p-4 rounded-xl border ${
+                          darkMode ? 'bg-gray-900/40 border-gray-700' : 'bg-gray-50 border-gray-200'
+                        }`}>
+                          <h4 className={`font-semibold mb-3 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            {section.title}
+                          </h4>
+                          <div className="space-y-2">
+                            {section.rows.map(([label, value]) => (
+                              <div key={label} className="flex justify-between gap-3 text-sm">
+                                <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>{label}</span>
+                                <span className={`font-medium text-right capitalize ${darkMode ? 'text-gray-100' : 'text-gray-900'}`}>
+                                  {String(value)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {result.verification_details.evidence && (
+                      <div className={`mt-4 p-4 rounded-xl border ${
+                        darkMode ? 'bg-blue-900/20 border-blue-700/50' : 'bg-blue-50 border-blue-200'
+                      }`}>
+                        <div className="flex items-center justify-between gap-4 mb-3">
+                          <h4 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                            Delivery Evidence
+                          </h4>
+                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                            result.verification_details.evidence.real_time
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-gray-100 text-gray-700'
+                          }`}>
+                            {result.verification_details.evidence.real_time ? 'REAL-TIME SMTP' : 'SMTP NOT RUN'}
+                          </span>
+                        </div>
+                        <div className="grid sm:grid-cols-3 gap-3 text-sm mb-3">
+                          <div>
+                            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>SMTP recipient: </span>
+                            <strong className="capitalize">{result.verification_details.evidence.smtp_recipient}</strong>
+                          </div>
+                          <div>
+                            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Inbox placement: </span>
+                            <strong className="capitalize">{result.verification_details.evidence.inbox_placement}</strong>
+                          </div>
+                          <div>
+                            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>Ownership: </span>
+                            <strong className="capitalize">{result.verification_details.evidence.ownership}</strong>
+                          </div>
+                        </div>
+                        <ul className={`text-xs space-y-1 ${darkMode ? 'text-blue-300' : 'text-blue-800'}`}>
+                          {(result.verification_details.evidence.limitations || []).map((limitation) => (
+                            <li key={limitation}>• {limitation}</li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>
@@ -2589,25 +2722,22 @@ const EnterpriseEmailIntelligencePlatform = () => {
                                 Domain Age
                               </span>
                               <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                                {result.domain_intelligence.domain_age || 'Unknown'} days
+								{result.domain_intelligence.domain_age >= 0 ? `${result.domain_intelligence.domain_age} days` : 'Not assessed'}
                               </span>
                             </div>
                             
                             <div className="flex justify-between items-center">
                               <span className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                                Reputation Score
+								Reputation
                               </span>
                               <span className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                                {result.domain_intelligence.reputation_score || 0}/100
+								Not assessed
                               </span>
                             </div>
                             
-                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                              <div 
-                                className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-2 rounded-full transition-all duration-1000"
-                                style={{ width: `${result.domain_intelligence.reputation_score || 0}%` }}
-                              ></div>
-                            </div>
+							<p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+							  No external reputation or RDAP source is configured.
+							</p>
                           </div>
                         </div>
                         
@@ -2669,7 +2799,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                         <div className="flex items-center space-x-3 mb-4">
                           <CheckCircle className="h-6 w-6 text-blue-600" />
                           <h3 className={`text-lg font-semibold ${darkMode ? 'text-blue-300' : 'text-blue-900'}`}>
-                            AI Recommendations
+                            Recommendations
                           </h3>
                         </div>
                         <ul className="space-y-3">
@@ -2698,7 +2828,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                         Smart Corrections
                       </h3>
                       <span className="px-3 py-1 bg-gradient-to-r from-yellow-500 to-orange-600 text-white text-xs font-medium rounded-full">
-                        AI-Suggested
+                        Typo Match
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-3">
@@ -2752,7 +2882,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                 
                 <div className="flex items-center space-x-2 ml-auto">
                   <span className="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white text-xs font-medium rounded-full animate-pulse">
-                    🚀 Ultra-Fast Batch Processing
+                    Concurrent Batch Processing
                   </span>
                 </div>
               </div>
@@ -2904,28 +3034,28 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     
                     <div className="text-center">
                       <div className="text-3xl font-bold text-emerald-600 mb-2">
-                        {bulkResults.summary?.valid || 0}
+						{bulkResults.summary?.deliverable || 0}
                       </div>
                       <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        Valid Emails
+						Deliverable
                       </div>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-3xl font-bold text-red-600 mb-2">
-                        {bulkResults.summary?.invalid || 0}
+						{(bulkResults.summary?.risky || 0) + (bulkResults.summary?.unknown || 0)}
                       </div>
                       <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        Invalid Emails
+						Risky / Unknown
                       </div>
                     </div>
                     
                     <div className="text-center">
                       <div className="text-3xl font-bold text-purple-600 mb-2">
-                        {Math.round(bulkResults.summary?.valid_percentage || 0)}%
+						{bulkResults.summary?.undeliverable || 0}
                       </div>
                       <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                        Success Rate
+						Undeliverable / Invalid
                       </div>
                     </div>
                   </div>
@@ -3008,12 +3138,8 @@ const EnterpriseEmailIntelligencePlatform = () => {
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                result.is_valid 
-                                  ? 'bg-emerald-100 text-emerald-800' 
-                                  : 'bg-red-100 text-red-800'
-                              }`}>
-                                {result.is_valid ? 'Valid' : 'Invalid'}
+                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${getDeliveryStatusColor(result.deliverability_status)}`}>
+                                {getDeliveryStatusLabel(result.deliverability_status)}
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
@@ -3104,7 +3230,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                       {Math.round(realTimeStats.performance?.success_rate || 0)}%
                     </div>
                     <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Validation accuracy
+                        Successful API requests
                     </div>
                   </div>
                   
@@ -3131,14 +3257,14 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     <div className="flex items-center space-x-3 mb-3">
                       <Users className="h-6 w-6 text-orange-600" />
                       <h3 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                        Cache Hits
+                        API Errors
                       </h3>
                     </div>
                     <div className="text-2xl font-bold text-orange-600 mb-1">
-                      {realTimeStats.cache?.items || 0}
+                      {realTimeStats.requests?.errors || 0}
                     </div>
                     <div className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
-                      Cached results
+                      Processing failures
                     </div>
                   </div>
                 </div>
@@ -3167,9 +3293,14 @@ const EnterpriseEmailIntelligencePlatform = () => {
                   : 'bg-white/80 border-gray-200/50'
               }`}>
                 <h3 className={`text-lg font-semibold mb-4 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                  Validation Trends (Last 7 Days)
+                  Session Validation Trends
                 </h3>
                 <div className="h-64">
+                  {chartData.validationTrends.length === 0 ? (
+                    <div className={`h-full flex items-center justify-center text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      Analyze emails in this browser session to populate real trend data.
+                    </div>
+                  ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData.validationTrends}>
                       <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#e5e7eb'} />
@@ -3218,6 +3349,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
                       />
                     </LineChart>
                   </ResponsiveContainer>
+                  )}
                 </div>
               </div>
               
@@ -3230,6 +3362,11 @@ const EnterpriseEmailIntelligencePlatform = () => {
                   Risk Distribution
                 </h3>
                 <div className="h-64">
+                  {chartData.riskDistribution.length === 0 ? (
+                    <div className={`h-full flex items-center justify-center text-center ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                      No real risk-distribution data is available yet.
+                    </div>
+                  ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <RechartsPie>
                       <Pie
@@ -3252,11 +3389,12 @@ const EnterpriseEmailIntelligencePlatform = () => {
                           borderRadius: '8px',
                           color: darkMode ? '#ffffff' : '#000000'
                         }}
-                        formatter={(value) => [`${value}%`, 'Percentage']}
+                        formatter={(value) => [value, 'Session results']}
                       />
                       <Legend />
                     </RechartsPie>
                   </ResponsiveContainer>
+                  )}
                 </div>
               </div>
             </div>
@@ -3390,14 +3528,18 @@ const EnterpriseEmailIntelligencePlatform = () => {
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center space-x-4">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                          item.result.is_valid 
+                          item.result.deliverability_status === 'deliverable'
                             ? 'bg-emerald-100 dark:bg-emerald-900/30' 
-                            : 'bg-red-100 dark:bg-red-900/30'
+                            : ['invalid', 'undeliverable'].includes(item.result.deliverability_status)
+                            ? 'bg-red-100 dark:bg-red-900/30'
+                            : 'bg-yellow-100 dark:bg-yellow-900/30'
                         }`}>
-                          {item.result.is_valid ? (
+                          {item.result.deliverability_status === 'deliverable' ? (
                             <CheckCircle className="h-6 w-6 text-emerald-600" />
-                          ) : (
+                          ) : ['invalid', 'undeliverable'].includes(item.result.deliverability_status) ? (
                             <XCircle className="h-6 w-6 text-red-600" />
+                          ) : (
+                            <AlertTriangle className="h-6 w-6 text-yellow-600" />
                           )}
                         </div>
                         

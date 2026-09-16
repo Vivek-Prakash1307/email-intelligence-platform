@@ -19,7 +19,7 @@ func NewDomainValidator(weights models.ScoringWeights) *DomainValidator {
 // Validate performs domain intelligence analysis
 func (v *DomainValidator) Validate(domain string) models.DomainIntelligenceResult {
 	result := models.DomainIntelligenceResult{}
-	
+
 	result.IsDisposable = v.checkDisposableEmail(domain)
 	result.IsFreeProvider = v.checkFreeProvider(domain)
 	result.IsCorporate = v.checkCorporateDomain(domain, result.IsFreeProvider.Status == "fail")
@@ -28,34 +28,43 @@ func (v *DomainValidator) Validate(domain string) models.DomainIntelligenceResul
 	result.DomainAge = v.estimateDomainAge(domain)
 	result.ReputationScore = v.calculateDomainReputation(result)
 	result.RiskIndicators = v.identifyRiskIndicators(result)
-	
+
 	return result
 }
 
 func (v *DomainValidator) checkDisposableEmail(domain string) models.ValidationResult {
-	disposablePatterns := []string{
-		"10minutemail", "guerrillamail", "mailinator", "tempmail", "yopmail",
-		"throwaway", "disposable", "temporary", "fake", "trash", "spam",
+	// Exact domains avoid false positives such as legitimate domains containing
+	// words like "mail" or "spam". This embedded set is intentionally modest;
+	// production deployments can replace it with a maintained data source.
+	disposableDomains := map[string]bool{
+		"10minutemail.com": true, "guerrillamail.com": true, "mailinator.com": true,
+		"tempmail.com": true, "temp-mail.org": true, "yopmail.com": true,
+		"throwawaymail.com": true, "sharklasers.com": true, "guerrillamailblock.com": true,
+		"maildrop.cc": true, "dispostable.com": true, "getnada.com": true,
+		"mailnesia.com": true, "mintemail.com": true, "trashmail.com": true,
 	}
-	
 	domainLower := strings.ToLower(domain)
-	
-	for _, pattern := range disposablePatterns {
-		if strings.Contains(domainLower, pattern) {
+	for candidate := domainLower; candidate != ""; {
+		if disposableDomains[candidate] {
 			return models.ValidationResult{
 				Status:    "fail",
 				Reason:    "Disposable email service detected",
-				RawSignal: pattern,
+				RawSignal: candidate,
 				Score:     0,
 				Weight:    v.weights.DisposableCheck,
 			}
 		}
+		dot := strings.IndexByte(candidate, '.')
+		if dot < 0 {
+			break
+		}
+		candidate = candidate[dot+1:]
 	}
-	
+
 	return models.ValidationResult{
 		Status:    "pass",
-		Reason:    "Not a disposable email service",
-		RawSignal: "legitimate_domain",
+		Reason:    "Not found in the embedded disposable-domain list",
+		RawSignal: "not_listed",
 		Score:     v.weights.DisposableCheck,
 		Weight:    v.weights.DisposableCheck,
 	}
@@ -63,11 +72,14 @@ func (v *DomainValidator) checkDisposableEmail(domain string) models.ValidationR
 
 func (v *DomainValidator) checkFreeProvider(domain string) models.ValidationResult {
 	freeProviders := map[string]bool{
-		"gmail.com": true, "yahoo.com": true, "hotmail.com": true, "outlook.com": true,
-		"aol.com": true, "icloud.com": true, "protonmail.com": true, "yandex.com": true,
-		"mail.ru": true, "zoho.com": true, "live.com": true, "msn.com": true,
+		"gmail.com": true, "googlemail.com": true,
+		"yahoo.com": true, "yahoo.co.in": true, "yahoo.co.uk": true,
+		"hotmail.com": true, "outlook.com": true, "live.com": true, "msn.com": true,
+		"aol.com": true, "icloud.com": true, "me.com": true, "mac.com": true,
+		"protonmail.com": true, "proton.me": true, "yandex.com": true, "yandex.ru": true,
+		"mail.ru": true, "zoho.com": true,
 	}
-	
+
 	if freeProviders[strings.ToLower(domain)] {
 		return models.ValidationResult{
 			Status:    "pass",
@@ -77,7 +89,7 @@ func (v *DomainValidator) checkFreeProvider(domain string) models.ValidationResu
 			Weight:    5,
 		}
 	}
-	
+
 	return models.ValidationResult{
 		Status:    "fail",
 		Reason:    "Not a free email provider",
@@ -91,7 +103,7 @@ func (v *DomainValidator) checkCorporateDomain(domain string, notFreeProvider bo
 	if notFreeProvider {
 		corporateIndicators := []string{"corp", "company", "inc", "ltd", "llc", "org"}
 		domainLower := strings.ToLower(domain)
-		
+
 		for _, indicator := range corporateIndicators {
 			if strings.Contains(domainLower, indicator) {
 				return models.ValidationResult{
@@ -103,7 +115,7 @@ func (v *DomainValidator) checkCorporateDomain(domain string, notFreeProvider bo
 				}
 			}
 		}
-		
+
 		return models.ValidationResult{
 			Status:    "pass",
 			Reason:    "Likely corporate domain",
@@ -112,7 +124,7 @@ func (v *DomainValidator) checkCorporateDomain(domain string, notFreeProvider bo
 			Weight:    8,
 		}
 	}
-	
+
 	return models.ValidationResult{
 		Status:    "fail",
 		Reason:    "Not a corporate domain",
@@ -133,75 +145,40 @@ func (v *DomainValidator) checkCatchAllDomain(domain string) models.ValidationRe
 }
 
 func (v *DomainValidator) checkBlacklistedDomain(domain string) models.ValidationResult {
-	blacklistedDomains := map[string]bool{
-		"spam.com": true,
-		"malware.com": true,
-	}
-	
-	if blacklistedDomains[strings.ToLower(domain)] {
-		return models.ValidationResult{
-			Status:    "fail",
-			Reason:    "Domain is blacklisted",
-			RawSignal: "blacklisted",
-			Score:     0,
-			Weight:    10,
-		}
-	}
-	
 	return models.ValidationResult{
-		Status:    "pass",
-		Reason:    "Domain not blacklisted",
-		RawSignal: "not_blacklisted",
-		Score:     5,
-		Weight:    10,
+		Status:    "unknown",
+		Reason:    "Blacklist status was not checked against an external reputation service",
+		RawSignal: "not_checked",
+		Score:     0,
+		Weight:    0,
 	}
 }
 
 func (v *DomainValidator) estimateDomainAge(domain string) int {
-	return 365 // Default to 1 year
+	return -1 // Unknown without an RDAP/WHOIS data source.
 }
 
 func (v *DomainValidator) calculateDomainReputation(result models.DomainIntelligenceResult) int {
-	score := 50
-	
+	score := 50 // Neutral when no external reputation source is configured.
+
 	if result.IsDisposable.Status == "fail" && result.IsDisposable.Score == 0 {
 		score -= 30
 	}
-	
-	if result.IsBlacklisted.Status == "fail" {
-		score -= 40
-	}
-	
-	if result.IsCorporate.Status == "pass" {
-		score += 20
-	}
-	
-	if result.IsFreeProvider.Status == "pass" {
-		score += 25
-	}
-	
-	if result.DomainAge > 365 {
-		score += 10
-	}
-	
+
 	return maxInt(0, minInt(100, score))
 }
 
 func (v *DomainValidator) identifyRiskIndicators(result models.DomainIntelligenceResult) []string {
 	indicators := []string{}
-	
+
 	if result.IsDisposable.Status == "fail" && result.IsDisposable.Score == 0 {
 		indicators = append(indicators, "Disposable email service")
 	}
-	
-	if result.IsBlacklisted.Status == "fail" {
-		indicators = append(indicators, "Blacklisted domain")
-	}
-	
-	if result.DomainAge < 30 {
+
+	if result.DomainAge >= 0 && result.DomainAge < 30 {
 		indicators = append(indicators, "Very new domain")
 	}
-	
+
 	return indicators
 }
 

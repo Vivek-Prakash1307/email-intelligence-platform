@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +28,6 @@ type Engine struct {
 	mlAnalyzer        *analyzers.MLAnalyzer
 	qualityAnalyzer   *analyzers.QualityAnalyzer
 	contentGenerator  *analyzers.ContentGenerator
-	rateLimiter       map[string]time.Time
-	rateLimitMutex    sync.RWMutex
 }
 
 // New creates a new email intelligence engine
@@ -48,54 +45,58 @@ func New(cfg *config.Config) *Engine {
 		mlAnalyzer:        analyzers.NewMLAnalyzer(),
 		qualityAnalyzer:   analyzers.NewQualityAnalyzer(),
 		contentGenerator:  analyzers.NewContentGenerator(),
-		rateLimiter:       make(map[string]time.Time),
 	}
 }
 
 // AnalyzeEmail performs complete email intelligence analysis
 func (e *Engine) AnalyzeEmail(ctx context.Context, email string, deepAnalysis bool) (*models.EmailIntelligence, error) {
 	startTime := time.Now()
-	
-	// Check cache first
-	if cached, found := e.cache.Get(email); found {
-		if intelligence, ok := cached.(*models.EmailIntelligence); ok {
-			return intelligence, nil
+	email = normalizeEmail(email)
+	cacheKey := fmtCacheKey(email, deepAnalysis)
+
+	// Deep analysis is deliberately uncached: every request must obtain a fresh
+	// SMTP recipient response. Basic DNS/domain analysis may use the short cache.
+	if !deepAnalysis {
+		if cached, found := e.cache.Get(cacheKey); found {
+			if intelligence, ok := cached.(*models.EmailIntelligence); ok {
+				return intelligence, nil
+			}
 		}
 	}
-	
-	// Rate limiting check
-	if !e.checkRateLimit(email) {
-		return nil, fmt.Errorf("rate limit exceeded")
-	}
-	
-	email = strings.TrimSpace(strings.ToLower(email))
-	
+
 	intelligence := &models.EmailIntelligence{
 		Email:      email,
 		Timestamp:  time.Now(),
-		APIVersion: "2.0.0",
+		APIVersion: "3.1.0",
 	}
-	
+
 	// 1. Syntax Validation (immediate)
 	intelligence.SyntaxValidation = e.syntaxValidator.Validate(email)
-	
+
 	if intelligence.SyntaxValidation.Status != "pass" {
-		intelligence.IsValid = false
 		intelligence.ValidationScore = 0
-		intelligence.RiskCategory = "Invalid"
-		intelligence.ConfidenceLevel = "High"
+		intelligence.ScoreBreakdown = models.ScoreBreakdown{
+			TotalScore: 0, MaxPossible: 100, Outcome: "invalid_syntax",
+			OverrideReason: "The address syntax is invalid or unsupported",
+			Explanation:    "The address syntax is invalid or unsupported; final score 0/100",
+		}
+		e.qualityAnalyzer.Determine(intelligence)
+		e.contentGenerator.Generate(intelligence)
 		intelligence.ProcessingTime = time.Since(startTime).Milliseconds()
+		if !deepAnalysis {
+			e.cache.Set(cacheKey, intelligence, cache.DefaultExpiration)
+		}
 		return intelligence, nil
 	}
-	
+
 	// Extract domain
 	parts := strings.Split(email, "@")
 	domain := parts[1]
-	
+
 	// 2-4. Parallel validation pipeline
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	
+
 	// DNS Validation (parallel)
 	wg.Add(1)
 	go func() {
@@ -105,7 +106,7 @@ func (e *Engine) AnalyzeEmail(ctx context.Context, email string, deepAnalysis bo
 		intelligence.DNSValidation = result
 		mu.Unlock()
 	}()
-	
+
 	// Security Analysis (parallel - SPF, DMARC, DKIM all parallel inside)
 	wg.Add(1)
 	go func() {
@@ -115,7 +116,7 @@ func (e *Engine) AnalyzeEmail(ctx context.Context, email string, deepAnalysis bo
 		intelligence.SecurityAnalysis = result
 		mu.Unlock()
 	}()
-	
+
 	// Domain Intelligence (parallel)
 	wg.Add(1)
 	go func() {
@@ -125,51 +126,68 @@ func (e *Engine) AnalyzeEmail(ctx context.Context, email string, deepAnalysis bo
 		intelligence.DomainIntelligence = result
 		mu.Unlock()
 	}()
-	
+
 	// Wait for parallel operations
 	wg.Wait()
-	
+
 	// 5. SMTP Validation (if deep analysis and MX records exist)
 	if deepAnalysis && intelligence.DNSValidation.MXRecords.Status == "pass" {
 		intelligence.SMTPValidation = e.smtpValidator.Validate(ctx, email, intelligence.DNSValidation.MXDetails)
+	} else {
+		intelligence.SMTPValidation = models.SMTPValidationResult{
+			Reachable:       models.ValidationResult{Status: "unknown", Reason: "SMTP mailbox probe was not performed", RawSignal: "not_checked", Score: 0, Weight: e.config.ScoringWeights.SMTPReachability},
+			MailboxStatus:   "not_checked",
+			AcceptAllStatus: "not_checked",
+		}
 	}
-	
+
+	// A random address accepted in the same SMTP session indicates accept-all.
+	if intelligence.SMTPValidation.AcceptAllStatus == "yes" {
+		intelligence.DomainIntelligence.IsCatchAll = models.ValidationResult{Status: "fail", Reason: "Server accepted a random recipient", RawSignal: "accept_all", Score: 0, Weight: e.config.ScoringWeights.CatchAllRisk}
+	} else if intelligence.SMTPValidation.AcceptAllStatus == "no" {
+		intelligence.DomainIntelligence.IsCatchAll = models.ValidationResult{Status: "pass", Reason: "Server rejected a random recipient", RawSignal: "not_accept_all", Score: e.config.ScoringWeights.CatchAllRisk, Weight: e.config.ScoringWeights.CatchAllRisk}
+	}
+
 	// 6. Calculate Enterprise Score
 	intelligence.ScoreBreakdown = e.scoreAnalyzer.Calculate(intelligence)
 	intelligence.ValidationScore = intelligence.ScoreBreakdown.TotalScore
-	
+
 	// 7. Risk Analysis
 	intelligence.RiskAnalysis = e.riskAnalyzer.Analyze(intelligence)
-	
-	// 8. ML Predictions
-	intelligence.MLPredictions = e.mlAnalyzer.Predict(intelligence)
-	
-	// 9. Determine Quality Metrics
+
+	// 8. Determine quality and the explicit deliverability state.
 	e.qualityAnalyzer.Determine(intelligence)
-	
-	// 10. Generate User-Friendly Content
+
+	// 9. Produce deterministic heuristic estimates after status is known.
+	intelligence.MLPredictions = e.mlAnalyzer.Predict(intelligence)
+
+	// 10. Generate user-friendly content.
 	e.contentGenerator.Generate(intelligence)
-	
+
 	intelligence.ProcessingTime = time.Since(startTime).Milliseconds()
-	
+
 	// Cache result
-	e.cache.Set(email, intelligence, cache.DefaultExpiration)
-	
+	if !deepAnalysis {
+		e.cache.Set(cacheKey, intelligence, cache.DefaultExpiration)
+	}
+
 	return intelligence, nil
 }
 
-// checkRateLimit checks if email is rate limited
-func (e *Engine) checkRateLimit(email string) bool {
-	e.rateLimitMutex.Lock()
-	defer e.rateLimitMutex.Unlock()
-	
-	now := time.Now()
-	if lastRequest, exists := e.rateLimiter[email]; exists {
-		if now.Sub(lastRequest) < time.Second {
-			return false
-		}
+func fmtCacheKey(email string, deep bool) string {
+	if deep {
+		return email + "|deep"
 	}
-	
-	e.rateLimiter[email] = now
-	return true
+	return email + "|basic"
+}
+
+// normalizeEmail preserves the local-part because RFC mailbox local-parts can
+// be case-sensitive, while DNS domains are case-insensitive.
+func normalizeEmail(email string) string {
+	email = strings.TrimSpace(email)
+	at := strings.LastIndexByte(email, '@')
+	if at < 0 {
+		return email
+	}
+	return email[:at+1] + strings.ToLower(email[at+1:])
 }

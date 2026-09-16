@@ -3,332 +3,235 @@ package validators
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"net"
+	"net/textproto"
 	"strings"
-	"sync"
 	"time"
 
 	"email-intelligence/internal/models"
 )
 
-// SMTPValidator validates SMTP connectivity
+// SMTPValidator performs a non-delivery SMTP envelope probe. It never sends
+// DATA and therefore never sends a message to the address being checked.
 type SMTPValidator struct {
 	timeout time.Duration
 	weights models.ScoringWeights
 }
 
-// NewSMTPValidator creates a new SMTP validator
 func NewSMTPValidator(timeout time.Duration, weights models.ScoringWeights) *SMTPValidator {
-	return &SMTPValidator{
-		timeout: timeout,
-		weights: weights,
-	}
+	return &SMTPValidator{timeout: timeout, weights: weights}
 }
 
-// Validate performs SMTP validation with PARALLEL connection attempts
+// Validate tries up to three MX hosts in priority order. Only port 25 is used:
+// submission ports do not prove that an MX receives Internet mail.
 func (v *SMTPValidator) Validate(ctx context.Context, email string, mxRecords []models.MXRecord) models.SMTPValidationResult {
-	startTime := time.Now()
-
+	started := time.Now()
 	if len(mxRecords) == 0 {
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "fail",
-				Reason:    "No MX records to test",
-				RawSignal: "no_mx_records",
-				Score:     0,
-				Weight:    v.weights.SMTPReachability,
-			},
-		}
+		return v.result("unknown", "No MX host is available for an SMTP probe", "no_mx_records", 0, started)
 	}
-
-	// Extract domain from email
-	parts := strings.Split(email, "@")
-	domain := ""
-	if len(parts) == 2 {
-		domain = strings.ToLower(parts[1])
-	}
-
-	// Check if it's a known trusted provider
-	if result, ok := v.checkTrustedProvider(domain, startTime); ok {
-		return result
-	}
-
-	// Try multiple MX servers and ports in PARALLEL
-	resultChan := make(chan models.SMTPValidationResult, 1)
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
-	
-	ports := []int{25, 587, 465, 2525}
-	
-	// Launch parallel connection attempts
-	for _, mx := range mxRecords {
-		for _, port := range ports {
-			wg.Add(1)
-			go func(host string, p int) {
-				defer wg.Done()
-				
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				
-				result := v.trySMTPConnection(ctx, email, host, p, startTime)
-				if result.Reachable.Status == "pass" && result.Reachable.Score >= 15 {
-					select {
-					case resultChan <- result:
-						cancel() // Stop other attempts
-					default:
-					}
-				}
-			}(mx.Host, port)
+	ctx = probeCtx
+	limit := len(mxRecords)
+	if limit > 3 {
+		limit = 3
+	}
+	attempted := make([]string, 0, limit)
+	var permanentReject *models.SMTPValidationResult
+	var lastUnknown models.SMTPValidationResult
+	for _, mx := range mxRecords[:limit] {
+		if ctx.Err() != nil {
+			break
+		}
+		attempted = append(attempted, mx.Host)
+		result := v.probeHost(ctx, email, mx.Host, started)
+		result.AttemptedHosts = append([]string(nil), attempted...)
+		switch result.MailboxStatus {
+		case "accepted":
+			return result
+		case "rejected":
+			copy := result
+			permanentReject = &copy
+		default:
+			lastUnknown = result
 		}
 	}
-	
-	// Wait for first success or all to complete
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-	
-	// Return first successful result
-	if result, ok := <-resultChan; ok {
-		return result
+	if permanentReject != nil {
+		permanentReject.AttemptedHosts = attempted
+		return *permanentReject
 	}
-	
-	// Fallback: Try TCP connections in parallel
-	return v.tryTCPFallback(ctx, mxRecords, startTime)
+	if lastUnknown.MailboxStatus != "" {
+		lastUnknown.AttemptedHosts = attempted
+		return lastUnknown
+	}
+	result := v.result("unknown", "SMTP probe was cancelled or timed out", "probe_cancelled", 0, started)
+	result.AttemptedHosts = attempted
+	return result
 }
 
-// checkTrustedProvider checks if domain is a trusted email provider
-func (v *SMTPValidator) checkTrustedProvider(domain string, startTime time.Time) (models.SMTPValidationResult, bool) {
-	trustedProviders := map[string]bool{
-		"gmail.com": true, "googlemail.com": true,
-		"yahoo.com": true, "yahoo.co.in": true, "yahoo.co.uk": true,
-		"outlook.com": true, "hotmail.com": true, "live.com": true, "msn.com": true,
-		"icloud.com": true, "me.com": true, "mac.com": true,
-		"aol.com": true,
-		"protonmail.com": true, "proton.me": true,
-		"zoho.com": true,
-		"yandex.com": true, "yandex.ru": true,
-		"mail.com": true,
-		"gmx.com": true, "gmx.de": true,
-		"rediffmail.com": true,
-	}
-
-	if trustedProviders[domain] {
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "pass",
-				Reason:    "Trusted email provider (SMTP verified)",
-				RawSignal: "trusted_provider",
-				Score:     v.weights.SMTPReachability,
-				Weight:    v.weights.SMTPReachability,
-			},
-			ResponseTime:   time.Since(startTime).Milliseconds(),
-			Port:           25,
-			TLSSupported:   true,
-			ServerResponse: "Trusted provider - verification successful",
-		}, true
-	}
-	
-	return models.SMTPValidationResult{}, false
-}
-
-// trySMTPConnection attempts SMTP connection on a specific host and port
-func (v *SMTPValidator) trySMTPConnection(ctx context.Context, email string, host string, port int, startTime time.Time) models.SMTPValidationResult {
-	address := fmt.Sprintf("%s:%d", host, port)
-	timeout := 5 * time.Second
-
-	var conn net.Conn
-	var err error
-
-	// Use TLS for port 465
-	if port == 465 {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         host,
-		}
-		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", address, tlsConfig)
-	} else {
-		dialer := net.Dialer{Timeout: timeout}
-		conn, err = dialer.DialContext(ctx, "tcp", address)
-	}
-
+func (v *SMTPValidator) probeHost(ctx context.Context, email, host string, started time.Time) models.SMTPValidationResult {
+	dialer := net.Dialer{Timeout: v.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "25"))
 	if err != nil {
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "fail",
-				Reason:    "SMTP connection failed",
-				RawSignal: "connection_failed",
-				Score:     0,
-				Weight:    v.weights.SMTPReachability,
-			},
-			ResponseTime: time.Since(startTime).Milliseconds(),
-			Port:         port,
-		}
+		result := v.result("unknown", "Could not connect to the MX server; mailbox existence is unknown", "connection_failed", 0, started)
+		result.Attempted, result.Host, result.Port = true, host, 25
+		return result
 	}
 	defer conn.Close()
-
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	reader := bufio.NewReader(conn)
+	deadline := time.Now().Add(v.timeout)
+	if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
+		deadline = parentDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+	reader := textproto.NewReader(bufio.NewReader(conn))
 	writer := bufio.NewWriter(conn)
-
-	read := func() string {
-		line, _ := reader.ReadString('\n')
-		return strings.TrimSpace(line)
-	}
-	write := func(cmd string) {
-		writer.WriteString(cmd + "\r\n")
-		writer.Flush()
+	read := func() (int, string, error) { return reader.ReadResponse(0) }
+	write := func(command string) error {
+		if _, err := writer.WriteString(command + "\r\n"); err != nil {
+			return err
+		}
+		return writer.Flush()
 	}
 
-	// Read banner
-	banner := read()
-	if !strings.HasPrefix(banner, "220") {
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "pass",
-				Reason:    "SMTP server responded",
-				RawSignal: "server_responded",
-				Score:     15,
-				Weight:    v.weights.SMTPReachability,
-			},
-			ResponseTime:   time.Since(startTime).Milliseconds(),
-			Port:           port,
-			ServerResponse: banner,
+	code, message, err := read()
+	if err != nil || code != 220 {
+		return v.smtpUnknown(host, code, message, "invalid_banner", "MX server did not provide a usable SMTP greeting", started)
+	}
+	if err = write("EHLO verifier.invalid"); err != nil {
+		return v.smtpUnknown(host, 0, "", "write_failed", "SMTP handshake failed", started)
+	}
+	ehloCode, ehloMessage, err := read()
+	if err != nil || ehloCode/100 != 2 {
+		_ = write("HELO verifier.invalid")
+		ehloCode, ehloMessage, err = read()
+		if err != nil || ehloCode/100 != 2 {
+			return v.smtpUnknown(host, ehloCode, ehloMessage, "helo_rejected", "MX server rejected the SMTP handshake", started)
 		}
 	}
-
-	// SMTP handshake
-	write("EHLO emailintel.local")
-	read()
-
-	write("MAIL FROM:<verify@emailintel.local>")
-	mailResp := read()
-
-	if strings.HasPrefix(mailResp, "250") {
-		write("RCPT TO:<" + email + ">")
-		rcptResp := read()
-		write("QUIT")
-
-		if strings.HasPrefix(rcptResp, "250") {
-			return models.SMTPValidationResult{
-				Reachable: models.ValidationResult{
-					Status:    "pass",
-					Reason:    "Mailbox verified by SMTP server",
-					RawSignal: "mailbox_verified",
-					Score:     v.weights.SMTPReachability,
-					Weight:    v.weights.SMTPReachability,
-				},
-				ResponseTime:   time.Since(startTime).Milliseconds(),
-				Port:           port,
-				TLSSupported:   port == 465 || port == 587,
-				ServerResponse: rcptResp,
-			}
-		}
-
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "pass",
-				Reason:    "SMTP server reachable",
-				RawSignal: "smtp_reachable",
-				Score:     15,
-				Weight:    v.weights.SMTPReachability,
-			},
-			ResponseTime:   time.Since(startTime).Milliseconds(),
-			Port:           port,
-			TLSSupported:   port == 465 || port == 587,
-			ServerResponse: rcptResp,
-		}
+	if err = write("MAIL FROM:<>"); err != nil {
+		return v.smtpUnknown(host, 0, "", "write_failed", "Could not start an SMTP envelope", started)
 	}
-
-	write("QUIT")
-	return models.SMTPValidationResult{
-		Reachable: models.ValidationResult{
-			Status:    "pass",
-			Reason:    "SMTP server reachable",
-			RawSignal: "smtp_connected",
-			Score:     15,
-			Weight:    v.weights.SMTPReachability,
-		},
-		ResponseTime:   time.Since(startTime).Milliseconds(),
-		Port:           port,
-		ServerResponse: mailResp,
+	mailCode, mailMessage, err := read()
+	if err != nil || mailCode/100 != 2 {
+		return v.smtpUnknown(host, mailCode, mailMessage, "sender_probe_blocked", "Server policy blocked the verification probe", started)
 	}
-}
-
-// tryTCPFallback tries simple TCP connections in parallel
-func (v *SMTPValidator) tryTCPFallback(ctx context.Context, mxRecords []models.MXRecord, startTime time.Time) models.SMTPValidationResult {
-	resultChan := make(chan bool, 1)
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	
-	for _, mx := range mxRecords {
-		wg.Add(1)
-		go func(host string) {
-			defer wg.Done()
-			
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			
-			if testTCPConnection(host, 25, 3*time.Second) {
-				select {
-				case resultChan <- true:
-					cancel()
-				default:
-				}
-			}
-		}(mx.Host)
+	if err = write("RCPT TO:<" + email + ">"); err != nil {
+		return v.smtpUnknown(host, 0, "", "write_failed", "Could not submit the recipient probe", started)
 	}
-	
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-	
-	if <-resultChan {
-		return models.SMTPValidationResult{
-			Reachable: models.ValidationResult{
-				Status:    "pass",
-				Reason:    "SMTP server reachable (TCP verified)",
-				RawSignal: "tcp_verified",
-				Score:     15,
-				Weight:    v.weights.SMTPReachability,
-			},
-			ResponseTime: time.Since(startTime).Milliseconds(),
-			Port:         25,
-		}
-	}
-	
-	// Final fallback - MX records exist
-	return models.SMTPValidationResult{
-		Reachable: models.ValidationResult{
-			Status:    "pass",
-			Reason:    "SMTP assumed reachable (MX records valid)",
-			RawSignal: "mx_verified",
-			Score:     12,
-			Weight:    v.weights.SMTPReachability,
-		},
-		ResponseTime: time.Since(startTime).Milliseconds(),
-		Port:         25,
-	}
-}
-
-// testTCPConnection tests if a TCP connection can be established
-func testTCPConnection(host string, port int, timeout time.Duration) bool {
-	address := fmt.Sprintf("%s:%d", host, port)
-	conn, err := net.DialTimeout("tcp", address, timeout)
+	rcptCode, rcptMessage, err := read()
 	if err != nil {
+		return v.smtpUnknown(host, rcptCode, rcptMessage, "response_failed", "No conclusive recipient response was received", started)
+	}
+	if isMailboxRejection(rcptCode, rcptMessage) {
+		result := v.result("rejected", "Mailbox was rejected by the receiving server", "mailbox_rejected", rcptCode, started)
+		result.Attempted, result.Host, result.Port = true, host, 25
+		result.ServerResponse = sanitizeSMTPMessage(rcptMessage)
+		_ = write("QUIT")
+		return result
+	}
+	if !isRecipientAccepted(rcptCode) {
+		return v.smtpUnknown(host, rcptCode, rcptMessage, "inconclusive_response", "Server returned a temporary or policy response; mailbox existence is unknown", started)
+	}
+
+	_ = write("RSET")
+	_, _, _ = read()
+	acceptAllStatus := v.probeRandomRecipient(write, read, email)
+	result := v.result("accepted", "Recipient was accepted by the receiving server", "mailbox_accepted", rcptCode, started)
+	result.Attempted, result.Host, result.Port = true, host, 25
+	result.TLSSupported = strings.Contains(strings.ToUpper(ehloMessage), "STARTTLS")
+	result.ServerResponse = sanitizeSMTPMessage(rcptMessage)
+	result.AcceptAllStatus = acceptAllStatus
+	result.AcceptAll = acceptAllStatus == "yes"
+	if result.AcceptAll {
+		result.Reachable.Reason = "Server accepts random recipients (catch-all); this mailbox cannot be confirmed"
+		result.Reachable.RawSignal = "accept_all"
+		result.Reachable.Score = v.weights.SMTPReachability * 5 / 9
+	} else if acceptAllStatus == "unknown" {
+		result.Reachable.Reason = "Recipient was accepted, but the catch-all probe was inconclusive"
+		result.Reachable.RawSignal = "mailbox_accepted_catch_all_unknown"
+		result.Reachable.Score = v.weights.SMTPReachability * 2 / 3
+	}
+	_ = write("QUIT")
+	return result
+}
+
+func (v *SMTPValidator) probeRandomRecipient(write func(string) error, read func() (int, string, error), email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 {
+		return "unknown"
+	}
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil || write("MAIL FROM:<>") != nil {
+		return "unknown"
+	}
+	code, _, err := read()
+	if err != nil || code/100 != 2 {
+		return "unknown"
+	}
+	probe := "email-check-" + hex.EncodeToString(random) + email[at:]
+	if write("RCPT TO:<"+probe+">") != nil {
+		return "unknown"
+	}
+	code, message, err := read()
+	if err != nil {
+		return "unknown"
+	}
+	if isRecipientAccepted(code) {
+		return "yes"
+	}
+	if isMailboxRejection(code, message) {
+		return "no"
+	}
+	return "unknown"
+}
+
+func (v *SMTPValidator) result(mailboxStatus, reason, signal string, code int, started time.Time) models.SMTPValidationResult {
+	status, score := "unknown", 0
+	if mailboxStatus == "accepted" {
+		status, score = "pass", v.weights.SMTPReachability
+	} else if mailboxStatus == "rejected" {
+		status = "fail"
+	}
+	return models.SMTPValidationResult{
+		Reachable:     models.ValidationResult{Status: status, Reason: reason, RawSignal: signal, Score: score, Weight: v.weights.SMTPReachability},
+		MailboxStatus: mailboxStatus, AcceptAllStatus: "not_checked", DiagnosticCode: code, ResponseTime: time.Since(started).Milliseconds(),
+	}
+}
+
+func (v *SMTPValidator) smtpUnknown(host string, code int, message, signal, reason string, started time.Time) models.SMTPValidationResult {
+	result := v.result("unknown", reason, signal, code, started)
+	result.Attempted, result.Host, result.Port = true, host, 25
+	result.ServerResponse = sanitizeSMTPMessage(message)
+	return result
+}
+
+func isRecipientAccepted(code int) bool { return code == 250 || code == 251 || code == 252 }
+
+func isMailboxRejection(code int, message string) bool {
+	if code/100 != 5 {
 		return false
 	}
-	conn.Close()
-	return true
+	lower := strings.ToLower(message)
+	mailboxSignals := []string{
+		"5.1.1", "5.1.3", "5.1.6", "5.1.10",
+		"user unknown", "unknown user", "unknown recipient", "no such user",
+		"recipient not found", "mailbox not found", "does not exist",
+		"recipient address rejected", "mailbox unavailable",
+	}
+	for _, signal := range mailboxSignals {
+		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeSMTPMessage(message string) string {
+	message = strings.Join(strings.Fields(message), " ")
+	if len(message) > 300 {
+		return message[:300]
+	}
+	return message
 }
