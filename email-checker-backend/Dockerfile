@@ -1,5 +1,5 @@
 # Use specific Go version for better compatibility
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Install necessary packages for compilation
 RUN apk add --no-cache git ca-certificates tzdata

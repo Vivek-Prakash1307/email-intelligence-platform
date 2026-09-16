@@ -59,7 +59,7 @@ func getEnv(key, defaultValue string) string {
 }
 
 func getCORSOrigins() []string {
-	origins := getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,https://email-intelligence-platform.vercel.app")
+	origins := getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,https://email-intelligence-platform-eora-3d3gdricp.vercel.app,https://email-intelligence-platform-eora.vercel.app,https://email-intelligence-platform.vercel.app")
 	result := []string{}
 	for _, origin := range splitAndTrim(origins, ",") {
 		if origin != "" {

@@ -36,8 +36,24 @@ npm install
 npm start
 ```
 
-The frontend defaults to `http://localhost:8080`. Override it with
-`REACT_APP_API_URL` when deploying.
+The frontend uses `http://localhost:8080` locally and the production Render API
+when hosted elsewhere. `REACT_APP_API_URL` can override either default.
+
+## Deploy
+
+The repository-level `render.yaml` configures the backend with:
+
+- Root directory: `email-checker-backend`
+- Build command: `go build -tags netgo -ldflags="-s -w" -o app .`
+- Start command: `./app`
+- Health check: `/api/v1/health`
+
+If the Render service was created manually instead of from the Blueprint, copy
+those values into its dashboard and keep `CORS_ALLOWED_ORIGINS` synchronized
+with the public Vercel domains. On Vercel, set the project root directory to
+`email-checker-frontend`; `vercel.json` supplies the build and SPA routing
+configuration. Public visitors also require Vercel Deployment Protection to be
+disabled for the production environment.
 
 ## API
 

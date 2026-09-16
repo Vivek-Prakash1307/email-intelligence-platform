@@ -17,6 +17,10 @@ import html2canvas from 'html2canvas';
 // Enterprise Email Intelligence Platform
 // Premium SaaS-Grade UI with Glassmorphism & Advanced Features
 
+const PRODUCTION_API_URL = 'https://email-intelligence-platform.onrender.com';
+const isLocalBrowser = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const DEFAULT_API_URL = process.env.REACT_APP_API_URL || (isLocalBrowser ? 'http://localhost:8080' : PRODUCTION_API_URL);
+
 const EnterpriseEmailIntelligencePlatform = () => {
   // Core State Management
   const [activeTab, setActiveTab] = useState('analyze');
@@ -41,7 +45,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
   
   // Settings State
   const [settings, setSettings] = useState({
-    apiUrl: process.env.REACT_APP_API_URL || 'http://localhost:8080',
+    apiUrl: DEFAULT_API_URL,
     apiVersion: process.env.REACT_APP_API_VERSION || 'v1',
     maxBulkEmails: 1000,
     autoRefreshInterval: 30,
@@ -72,7 +76,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
   const resultsRef = useRef(null);
   
   // API Configuration
-  const API_BASE_URL = settings.apiUrl || process.env.REACT_APP_API_URL || 'http://localhost:8080';
+  const API_BASE_URL = settings.apiUrl || DEFAULT_API_URL;
   const API_VERSION = settings.apiVersion || process.env.REACT_APP_API_VERSION || 'v1';
   
   const getApiUrl = useCallback((endpoint) => {
@@ -85,6 +89,10 @@ const EnterpriseEmailIntelligencePlatform = () => {
     if (savedSettings) {
       try {
         const parsed = JSON.parse(savedSettings);
+        // Migrate a localhost URL saved during development when the app runs in production.
+        if (!isLocalBrowser && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(parsed.apiUrl || '')) {
+          parsed.apiUrl = DEFAULT_API_URL;
+        }
         setSettings(prev => ({ ...prev, ...parsed }));
         
         // Apply theme setting
@@ -133,7 +141,7 @@ const EnterpriseEmailIntelligencePlatform = () => {
 
   const resetSettings = () => {
     const defaultSettings = {
-      apiUrl: 'http://localhost:8080',
+      apiUrl: DEFAULT_API_URL,
       apiVersion: 'v1',
       maxBulkEmails: 1000,
       autoRefreshInterval: 30,
